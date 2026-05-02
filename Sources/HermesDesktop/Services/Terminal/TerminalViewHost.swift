@@ -6,7 +6,7 @@ import Foundation
 final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
     private let hostView = TerminalHostView()
     private var startedLaunchToken: UUID?
-    private var scheduledLaunchToken: UUID?
+    private var pendingLaunchRequest: TerminalLaunchRequest?
     private var appliedAppearance: TerminalThemeAppearance?
     private var onProcessStart: (() -> Void)?
     private var onTitleChange: ((String) -> Void)?
@@ -36,6 +36,10 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
         appearance: TerminalThemeAppearance,
         isActive: Bool
     ) {
+        container.onLayout = { [weak self, weak container] in
+            guard let container else { return }
+            self?.mountedContainerDidLayout(container)
+        }
         container.mount(hostView)
         applyAppearance(appearance)
         setActive(isActive)
@@ -43,6 +47,7 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
     }
 
     func unmount(from container: TerminalMountContainerView) {
+        container.onLayout = nil
         container.unmountHostedView()
     }
 
@@ -73,16 +78,30 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
     private func scheduleStartIfNeeded(for request: TerminalLaunchRequest) {
         let launchToken = request.launchToken
         guard startedLaunchToken != launchToken else { return }
-        guard scheduledLaunchToken != launchToken else { return }
-        scheduledLaunchToken = launchToken
+        pendingLaunchRequest = request
+        startPendingLaunchIfReady()
+    }
 
-        Task { @MainActor [weak self] in
-            self?.startIfNeeded(for: request)
+    private func mountedContainerDidLayout(_ container: TerminalMountContainerView) {
+        guard hostView.superview === container else { return }
+        hostView.synchronizeTerminalLayout(maintainingScrollToEnd: true)
+        startPendingLaunchIfReady()
+    }
+
+    private func startPendingLaunchIfReady() {
+        guard let request = pendingLaunchRequest else { return }
+        guard startedLaunchToken != request.launchToken else {
+            pendingLaunchRequest = nil
+            return
         }
+        guard !hostView.isHidden, hostView.hasUsableTerminalFrame else { return }
+
+        hostView.synchronizeTerminalLayout(maintainingScrollToEnd: true)
+        pendingLaunchRequest = nil
+        startIfNeeded(for: request)
     }
 
     private func startIfNeeded(for request: TerminalLaunchRequest) {
-        scheduledLaunchToken = nil
         guard startedLaunchToken != request.launchToken else { return }
         startedLaunchToken = request.launchToken
 
@@ -110,13 +129,16 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
         hostView.isHidden = !isActive
         if !isActive {
             hostView.window?.makeFirstResponder(nil)
+        } else {
+            hostView.synchronizeTerminalLayout(maintainingScrollToEnd: true)
+            startPendingLaunchIfReady()
         }
     }
 
     @MainActor
     @objc
     private func terminateOnMainThread() {
-        scheduledLaunchToken = nil
+        pendingLaunchRequest = nil
         startedLaunchToken = nil
         hostView.terminalView.terminate()
     }
@@ -130,6 +152,7 @@ struct TerminalLaunchRequest {
 final class TerminalMountContainerView: NSView {
     private weak var hostedView: NSView?
     private var hostedConstraints: [NSLayoutConstraint] = []
+    var onLayout: (() -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -141,6 +164,11 @@ final class TerminalMountContainerView: NSView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        onLayout?()
     }
 
     func mount(_ view: NSView) {
@@ -164,6 +192,7 @@ final class TerminalMountContainerView: NSView {
             view.bottomAnchor.constraint(equalTo: bottomAnchor)
         ]
         NSLayoutConstraint.activate(hostedConstraints)
+        needsLayout = true
     }
 
     func unmountHostedView() {
@@ -186,6 +215,10 @@ final class TerminalMountContainerView: NSView {
 final class TerminalHostView: NSView {
     let terminalView = LocalProcessTerminalView(frame: .zero)
 
+    var hasUsableTerminalFrame: Bool {
+        bounds.width >= 80 && bounds.height >= 40
+    }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
@@ -204,6 +237,13 @@ final class TerminalHostView: NSView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    func synchronizeTerminalLayout(maintainingScrollToEnd: Bool) {
+        guard hasUsableTerminalFrame else { return }
+        layoutSubtreeIfNeeded()
+        terminalView.layoutSubtreeIfNeeded()
+        terminalView.synchronizeSizeWithFrame(maintainingScrollToEnd: maintainingScrollToEnd)
     }
 
     func apply(appearance: TerminalThemeAppearance) {

@@ -478,8 +478,9 @@ public final class Buffer {
                 lines.maxLength = newMaxLength
             }
 
-            // Make sure that the cursor stays on screen
-            x = min (x, newCols - 1)
+            // Keep the original cursor column through reflow. Clamping before
+            // reflow loses the logical cursor offset when a live line becomes
+            // narrower than the current cursor position.
             y = min (y, newRows - 1)
             if addToY != 0 {
                 y += addToY
@@ -508,6 +509,10 @@ public final class Buffer {
                 }
             }
         }
+
+        // Make sure that the cursor stays on screen after reflow had a chance
+        // to remap the old logical offset onto the new wrapped line shape.
+        x = min (x, newCols - 1)
         
         // DEBUG: Post-condition
         if lines.count > 0 {
@@ -659,11 +664,106 @@ public final class Buffer {
         return cols
     }
 
-    func getLinesToRemove (oldCols: Int, newCols: Int, bufferAbsoluteY: Int, nullChar: CharData) -> [Int]
+    private struct CursorReflowTarget {
+        let groupStart: Int
+        let line: Int
+        let col: Int
+    }
+
+    private func cursorLogicalOffset(
+        in wrappedLines: [BufferLine],
+        groupStart: Int,
+        oldCols: Int,
+        bufferAbsoluteY: Int
+    ) -> Int? {
+        guard bufferAbsoluteY >= groupStart && bufferAbsoluteY < groupStart + wrappedLines.count else {
+            return nil
+        }
+
+        let cursorLineIndex = bufferAbsoluteY - groupStart
+        var offset = 0
+        if cursorLineIndex > 0 {
+            for lineIndex in 0..<cursorLineIndex {
+                offset += getWrappedLineTrimmedLength(wrappedLines, lineIndex, oldCols)
+            }
+        }
+
+        let cursorLineLength = getWrappedLineTrimmedLength(wrappedLines, cursorLineIndex, oldCols)
+        return offset + min(x, cursorLineLength)
+    }
+
+    private func cursorPosition(forLogicalOffset offset: Int, lineLengths: [Int], newCols: Int) -> (line: Int, col: Int) {
+        guard !lineLengths.isEmpty else {
+            return (0, 0)
+        }
+
+        var remaining = max(0, offset)
+        for lineIndex in 0..<lineLengths.count {
+            let lineLength = max(0, lineLengths[lineIndex])
+            if remaining <= lineLength {
+                return (lineIndex, min(remaining, max(0, newCols - 1)))
+            }
+            remaining -= lineLength
+        }
+
+        let lastLineIndex = lineLengths.count - 1
+        return (lastLineIndex, min(lineLengths[lastLineIndex], max(0, newCols - 1)))
+    }
+
+    private func restoreCursor(
+        groupStart: Int,
+        line: Int,
+        col: Int,
+        newRows: Int,
+        newCols: Int
+    ) {
+        let absoluteRow = groupStart + line
+        y = max(0, min(newRows - 1, absoluteRow - yBase))
+        x = max(0, min(newCols - 1, col))
+    }
+
+    private func wrappedLineStart(containing row: Int) -> Int {
+        var start = max(0, min(row, lines.count - 1))
+        while start > 0 && lines[start].isWrapped {
+            start -= 1
+        }
+        return start
+    }
+
+    private func wrappedLines(startingAt start: Int) -> [BufferLine] {
+        guard start >= 0 && start < lines.count else {
+            return []
+        }
+
+        var wrappedLines = [lines[start]]
+        var nextIndex = start + 1
+        while nextIndex < lines.count && lines[nextIndex].isWrapped {
+            wrappedLines.append(lines[nextIndex])
+            nextIndex += 1
+        }
+        return wrappedLines
+    }
+
+    private func removedLineCount(before index: Int, removals: [Int]) -> Int {
+        var removed = 0
+        var removalIndex = 0
+        while removalIndex < removals.count - 1 {
+            let start = removals[removalIndex]
+            let count = removals[removalIndex + 1]
+            if start < index {
+                removed += min(count, max(0, index - start))
+            }
+            removalIndex += 2
+        }
+        return removed
+    }
+
+    private func getLinesToRemove (oldCols: Int, newCols: Int, bufferAbsoluteY: Int, nullChar: CharData) -> (removals: [Int], cursorTarget: CursorReflowTarget?)
     {
         // Gather all BufferLines that need to be removed from the Buffer here so that they can be
         // batched up and only committed once
         var toRemove : [Int] = []
+        var cursorTarget: CursorReflowTarget?
 
         var y = 0
         while y < lines.count-1 {
@@ -685,12 +785,12 @@ public final class Buffer {
                 nextLine = lines [i]
             }
 
-            // If these lines contain the cursor don't touch them, the program will handle fixing up wrapped
-            // lines with the cursor
-            if bufferAbsoluteY >= y && bufferAbsoluteY < i {
-                y += wrappedLines.count - 1
-                continue
-            }
+            let cursorOffset = cursorLogicalOffset(
+                in: wrappedLines,
+                groupStart: y,
+                oldCols: oldCols,
+                bufferAbsoluteY: bufferAbsoluteY
+            )
 
             // Copy buffer data to new locations
             var destLineIndex = 0
@@ -752,15 +852,49 @@ public final class Buffer {
                 toRemove.append (countToRemove)
             }
 
+            let retainedLineCount = max(1, wrappedLines.count - countToRemove)
+            for lineIndex in 0..<wrappedLines.count {
+                wrappedLines[lineIndex].isWrapped = lineIndex > 0 && lineIndex < retainedLineCount
+            }
+
+            if let cursorOffset {
+                let lineLengths = Array(repeating: newCols, count: retainedLineCount)
+                let position = cursorPosition(forLogicalOffset: cursorOffset, lineLengths: lineLengths, newCols: newCols)
+                cursorTarget = CursorReflowTarget(groupStart: y, line: position.line, col: position.col)
+            }
+
             y += wrappedLines.count - 1
         }
 
-        return toRemove
+        return (toRemove, cursorTarget)
     }
     
     func reflowWider (_ oldCols: Int, _ oldRows: Int, _ newCols: Int, _ newRows: Int)
     {
-        let toRemove = getLinesToRemove(oldCols: oldCols, newCols: newCols, bufferAbsoluteY: yBase + y, nullChar: CharData.Null)
+        let cursorAbsoluteY = yBase + y
+        let cursorTargetBeforeReflow: CursorReflowTarget?
+        if cursorAbsoluteY >= 0 && cursorAbsoluteY < lines.count {
+            let groupStart = wrappedLineStart(containing: cursorAbsoluteY)
+            let group = wrappedLines(startingAt: groupStart)
+            if group.count > 1,
+               let cursorOffset = cursorLogicalOffset(
+                in: group,
+                groupStart: groupStart,
+                oldCols: oldCols,
+                bufferAbsoluteY: cursorAbsoluteY
+               ) {
+                let lineLengths = getNewLineLengths(wrappedLines: group, oldCols: oldCols, newCols: newCols)
+                let position = cursorPosition(forLogicalOffset: cursorOffset, lineLengths: lineLengths, newCols: newCols)
+                cursorTargetBeforeReflow = CursorReflowTarget(groupStart: groupStart, line: position.line, col: position.col)
+            } else {
+                cursorTargetBeforeReflow = nil
+            }
+        } else {
+            cursorTargetBeforeReflow = nil
+        }
+
+        let result = getLinesToRemove(oldCols: oldCols, newCols: newCols, bufferAbsoluteY: yBase + y, nullChar: CharData.Null)
+        let toRemove = result.removals
         
         //print ("Lines to remove: \(toRemove) \(toRemove.count)")
         if toRemove.count > 0 {
@@ -827,6 +961,17 @@ public final class Buffer {
                 }
             }
             savedY = max (savedY - countRemovedSoFar, 0)
+        }
+
+        if let cursorTarget = cursorTargetBeforeReflow ?? result.cursorTarget {
+            let adjustedGroupStart = cursorTarget.groupStart - removedLineCount(before: cursorTarget.groupStart, removals: toRemove)
+            restoreCursor(
+                groupStart: adjustedGroupStart,
+                line: cursorTarget.line,
+                col: cursorTarget.col,
+                newRows: newRows,
+                newCols: newCols
+            )
         }
     }
     
@@ -913,13 +1058,13 @@ public final class Buffer {
                 wrappedLines.insert (nextLine, at: 0)
             }
 
-            // If these lines contain the cursor don't touch them, the program will handle fixing up
-            // wrapped lines with the cursor
             let absoluteY = yBase + self.y
-
-            if absoluteY >= y && absoluteY < y + wrappedLines.count {
-                continue
-            }
+            let cursorOffset = cursorLogicalOffset(
+                in: wrappedLines,
+                groupStart: y,
+                oldCols: oldCols,
+                bufferAbsoluteY: absoluteY
+            )
 
             let lastLineLength = wrappedLines [wrappedLines.count - 1].getTrimmedLength ()
             let destLineLengths = getNewLineLengths (wrappedLines: wrappedLines, oldCols: oldCols, newCols: newCols)
@@ -983,11 +1128,15 @@ public final class Buffer {
                 }
             }
 
-            // Null out the end of the line ends if a wide character wrapped to the following line
+            // Clear every stale cell after the new logical line ending. Leaving
+            // old fragments here causes repeated prompts/status bars after live
+            // resize because the renderer still sees old cells past destCol.
             for i in 0..<wrappedLines.count {
-                if destLineLengths [i] < newCols {
-                    wrappedLines [i] [destLineLengths [i]] = CharData.Null
+                let lineLength = i < destLineLengths.count ? destLineLengths[i] : 0
+                if lineLength < newCols {
+                    wrappedLines [i].replaceCells(start: lineLength, end: newCols, fillData: CharData.Null)
                 }
+                wrappedLines [i].isWrapped = i > 0 && i < destLineLengths.count
             }
 
             // Adjust viewport as needed
@@ -1015,6 +1164,17 @@ public final class Buffer {
             }
 
             savedY = min (savedY + linesToAdd, yBase + newRows - 1)
+
+            if let cursorOffset {
+                let position = cursorPosition(forLogicalOffset: cursorOffset, lineLengths: destLineLengths, newCols: newCols)
+                restoreCursor(
+                    groupStart: y,
+                    line: position.line,
+                    col: position.col,
+                    newRows: newRows,
+                    newCols: newCols
+                )
+            }
         }
 
         rearrange (toInsert, countToInsert)

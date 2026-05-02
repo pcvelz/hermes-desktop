@@ -1824,6 +1824,43 @@ extension TerminalView {
                 displayBuffer.lines.count > displayBuffer.rows
         }
     }
+
+    public var isScrolledToTerminalEnd: Bool {
+        let displayBuffer = terminal.displayBuffer
+        return terminal.isDisplayBufferAlternate || displayBuffer.yDisp >= displayBuffer.yBase
+    }
+
+    public func scrollToTerminalEnd(notifyAccessibility: Bool = true) {
+        let displayBuffer = terminal.displayBuffer
+        let maxScrollback = max(0, displayBuffer.lines.count - displayBuffer.rows)
+        scrollTo(row: min(displayBuffer.yBase, maxScrollback), notifyAccessibility: notifyAccessibility)
+    }
+
+    @discardableResult
+    public func synchronizeSizeWithFrame(maintainingScrollToEnd: Bool = true) -> Bool {
+        guard cellDimension != nil, frame.width > 0, frame.height > 0 else {
+            return false
+        }
+
+        let shouldRestoreEnd = maintainingScrollToEnd && isScrolledToTerminalEnd
+        let didResize = processSizeChange(newSize: frame.size)
+
+        if shouldRestoreEnd {
+            scrollToTerminalEnd(notifyAccessibility: false)
+        }
+
+        terminal.refresh(startRow: 0, endRow: terminal.rows)
+        updateDisplay(notifyAccessibility: false)
+        updateScroller()
+
+        #if os(macOS)
+        needsDisplay = true
+        #else
+        setNeedsDisplay(frame)
+        #endif
+
+        return didResize
+    }
     
     public func scroll (toPosition: Double)
     {

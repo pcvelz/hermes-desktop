@@ -1,4 +1,4 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 6.1
 
 import PackageDescription
 
@@ -30,7 +30,10 @@ let package = Package(
         ),
         .testTarget(
             name: "HermesDesktopTests",
-            dependencies: ["HermesDesktop"],
+            dependencies: [
+                "HermesDesktop",
+                .product(name: "SwiftTerm", package: "SwiftTerm")
+            ],
             path: "Tests/HermesDesktopTests"
         )
     ]

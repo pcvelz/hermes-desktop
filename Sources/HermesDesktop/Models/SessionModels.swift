@@ -1,6 +1,6 @@
 import Foundation
 
-struct SessionListPage: Codable {
+struct SessionListPage: Codable, Sendable {
     let ok: Bool
     let items: [SessionSummary]
     let totalCount: Int
@@ -12,7 +12,7 @@ struct SessionListPage: Codable {
     }
 }
 
-struct SessionSummary: Codable, Identifiable, Hashable, TitleIdentifiable, OptionalModelDisplayable {
+struct SessionSummary: Codable, Identifiable, Hashable, Sendable, TitleIdentifiable, OptionalModelDisplayable {
     let id: String
     let title: String?
     let model: String?
@@ -32,12 +32,12 @@ struct SessionSummary: Codable, Identifiable, Hashable, TitleIdentifiable, Optio
     }
 }
 
-struct SessionDetailResponse: Codable {
+struct SessionDetailResponse: Codable, Sendable {
     let ok: Bool
     let items: [SessionMessage]
 }
 
-struct SessionMessage: Codable, Identifiable, Hashable {
+struct SessionMessage: Codable, Identifiable, Hashable, Sendable {
     let id: String
     let role: SessionMessageRole
     let content: String?
@@ -71,7 +71,7 @@ struct SessionMessage: Codable, Identifiable, Hashable {
     }
 }
 
-enum SessionTimestamp: Codable, Hashable {
+enum SessionTimestamp: Codable, Hashable, Sendable {
     case unixSeconds(Double)
     case text(String)
 
@@ -116,7 +116,7 @@ enum SessionTimestamp: Codable, Hashable {
     }
 }
 
-enum SessionMessageRole: Codable, Hashable {
+enum SessionMessageRole: Codable, Hashable, Sendable {
     case assistant
     case user
     case system
@@ -182,7 +182,7 @@ enum SessionMessageRole: Codable, Hashable {
     }
 }
 
-enum JSONValue: Codable, Hashable {
+enum JSONValue: Codable, Hashable, Sendable {
     case string(String)
     case number(Double)
     case int(Int)
