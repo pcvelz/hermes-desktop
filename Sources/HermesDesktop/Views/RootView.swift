@@ -2,6 +2,10 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var appState: AppState
+    @State private var sessionsSplitLayout = HermesSplitLayout(minPrimaryWidth: 300, defaultPrimaryWidth: 340)
+    @State private var cronJobsSplitLayout = HermesSplitLayout(minPrimaryWidth: 300, defaultPrimaryWidth: 360)
+    @State private var filesSplitLayout = HermesSplitLayout(minPrimaryWidth: 300, defaultPrimaryWidth: 360)
+    @State private var skillsSplitLayout = HermesSplitLayout(minPrimaryWidth: 300, defaultPrimaryWidth: 340)
 
     var body: some View {
         HSplitView {
@@ -85,15 +89,15 @@ struct RootView: View {
         case .overview:
             OverviewView()
         case .files:
-            FilesView()
+            FilesView(splitLayout: $filesSplitLayout)
         case .sessions:
-            SessionsView()
+            SessionsView(splitLayout: $sessionsSplitLayout)
         case .cronjobs:
-            CronJobsView()
+            CronJobsView(splitLayout: $cronJobsSplitLayout)
         case .usage:
             UsageView()
         case .skills:
-            SkillsView()
+            SkillsView(splitLayout: $skillsSplitLayout)
         case .terminal:
             TerminalWorkspaceView(
                 workspace: appState.terminalWorkspace,

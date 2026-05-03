@@ -2,6 +2,7 @@ import SwiftUI
 
 struct FilesView: View {
     @EnvironmentObject private var appState: AppState
+    @Binding var splitLayout: HermesSplitLayout
     @State private var pendingWorkspaceFileID: String?
     @State private var bookmarkPendingRemoval: UUID?
     @State private var collapsedBookmarkGroupIDs: Set<String> = []
@@ -11,7 +12,7 @@ struct FilesView: View {
     @State private var showRemoveBookmarkAlert = false
 
     var body: some View {
-        HSplitView {
+        HermesPersistentHSplitView(layout: $splitLayout, detailMinWidth: 460) {
             VStack(alignment: .leading, spacing: 18) {
                 HermesPageHeader(
                     title: "Files",
@@ -27,12 +28,12 @@ struct FilesView: View {
 
                 libraryPanel
             }
-            .frame(minWidth: 300, idealWidth: 360, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(.horizontal, 20)
             .padding(.vertical, 20)
-
+        } detail: {
             editorPane
-                .frame(minWidth: 460, idealWidth: 640, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .hermesSplitDetailColumn(minWidth: 460, idealWidth: 640)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .task(id: selectedFileLoadTaskID) {

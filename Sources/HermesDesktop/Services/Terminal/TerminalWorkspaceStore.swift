@@ -33,8 +33,17 @@ final class TerminalWorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    func addTab(for connection: ConnectionProfile) -> TerminalTabModel {
-        let session = TerminalSession(connection: connection, sshTransport: sshTransport)
+    func addCommandTab(for connection: ConnectionProfile, commandLine: String) -> TerminalTabModel {
+        addTab(for: connection, startupCommandLine: commandLine)
+    }
+
+    @discardableResult
+    func addTab(for connection: ConnectionProfile, startupCommandLine: String? = nil) -> TerminalTabModel {
+        let session = TerminalSession(
+            connection: connection,
+            sshTransport: sshTransport,
+            startupCommandLine: startupCommandLine
+        )
         let tab = TerminalTabModel(
             title: connection.label,
             connectionID: connection.id,

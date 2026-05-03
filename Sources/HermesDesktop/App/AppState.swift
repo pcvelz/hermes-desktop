@@ -15,6 +15,7 @@ final class AppState: ObservableObject {
     @Published var selectedSessionID: String?
     @Published var sessions: [SessionSummary] = []
     @Published var sessionMessages: [SessionMessage] = []
+    @Published var sessionMessageDisplays: [SessionMessageDisplay] = []
     @Published var sessionsError: String?
     @Published var isLoadingSessions = false
     @Published var isRefreshingSessions = false
@@ -573,7 +574,7 @@ final class AppState: ObservableObject {
                     await loadSessionDetail(sessionID: preferredSessionID)
                 } else {
                     selectedSessionID = nil
-                    sessionMessages = []
+                    setSessionMessages([])
                 }
             }
         } catch {
@@ -586,19 +587,20 @@ final class AppState: ObservableObject {
     func loadSessionDetail(sessionID: String) async {
         guard let profile = activeConnection else { return }
         if selectedSessionID != sessionID {
-            sessionMessages = []
+            setSessionMessages([])
         }
         selectedSessionID = sessionID
         sessionsError = nil
         sessionConversationError = nil
 
         do {
-            sessionMessages = try await sessionBrowserService.loadTranscript(
+            let messages = try await sessionBrowserService.loadTranscript(
                 connection: profile,
                 sessionID: sessionID
             )
+            setSessionMessages(messages)
         } catch {
-            sessionMessages = []
+            setSessionMessages([])
             sessionsError = error.localizedDescription
             setStatusMessage("Unable to load session transcript")
         }
@@ -606,7 +608,7 @@ final class AppState: ObservableObject {
 
     func prepareNewSessionComposer() {
         selectedSessionID = nil
-        sessionMessages = []
+        setSessionMessages([])
         sessionsError = nil
         sessionConversationError = nil
     }
@@ -1091,6 +1093,23 @@ final class AppState: ObservableObject {
         terminalWorkspace.ensureInitialTab(for: profile)
     }
 
+    func resumeSessionInTerminal(_ session: SessionSummary) {
+        guard let profile = activeConnection else {
+            sessionsError = L10n.string("Select a connection before resuming a session in Terminal.")
+            setStatusMessage("No active connection")
+            return
+        }
+
+        let invocation = HermesSessionResumeInvocation(sessionID: session.id, connection: profile)
+        terminalWorkspace.addCommandTab(
+            for: profile.updated(),
+            commandLine: invocation.commandLine
+        )
+        selectedSection = .terminal
+        handleSectionEntry(.terminal)
+        setStatusMessage("Opening \(session.resolvedTitle) in Terminal…")
+    }
+
     private func handleSectionEntry(_ section: AppSection) {
         switch section {
         case .overview:
@@ -1159,6 +1178,12 @@ final class AppState: ObservableObject {
         }
     }
 
+    private func setSessionMessages(_ messages: [SessionMessage]) {
+        guard sessionMessages != messages else { return }
+        sessionMessages = messages
+        sessionMessageDisplays = messages.map(SessionMessageDisplay.init)
+    }
+
     private func startSessionTranscriptPolling(sessionID: String, connection: ConnectionProfile) {
         stopSessionTranscriptPolling()
 
@@ -1179,7 +1204,7 @@ final class AppState: ObservableObject {
                               self.selectedSessionID == sessionID else {
                             return
                         }
-                        self.sessionMessages = messages
+                        self.setSessionMessages(messages)
                     }
                 } catch {
                     continue
@@ -1254,7 +1279,7 @@ final class AppState: ObservableObject {
         guard overviewError == nil else {
             isRefreshingOverview = false
             sessions = []
-            sessionMessages = []
+            setSessionMessages([])
             sessionsError = nil
             isLoadingSessions = false
             isRefreshingSessions = false
@@ -1296,7 +1321,7 @@ final class AppState: ObservableObject {
         overviewError = nil
         isRefreshingOverview = false
         sessions = []
-        sessionMessages = []
+        setSessionMessages([])
         sessionsError = nil
         isLoadingSessions = false
         isRefreshingSessions = false

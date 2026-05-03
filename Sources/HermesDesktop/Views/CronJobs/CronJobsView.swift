@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CronJobsView: View {
     @EnvironmentObject private var appState: AppState
+    @Binding var splitLayout: HermesSplitLayout
 
     @State private var searchText = ""
     @State private var filterMode: CronFilterMode = .all
@@ -17,7 +18,7 @@ struct CronJobsView: View {
     }
 
     var body: some View {
-        HSplitView {
+        HermesPersistentHSplitView(layout: $splitLayout, detailMinWidth: 460) {
             VStack(alignment: .leading, spacing: 18) {
                 HermesPageHeader(
                     title: "Cron Jobs",
@@ -32,12 +33,12 @@ struct CronJobsView: View {
                 filterBar
                 jobsContent
             }
-            .frame(minWidth: 300, idealWidth: 360, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(.horizontal, 20)
             .padding(.vertical, 20)
-
+        } detail: {
             detailContent
-                .frame(minWidth: 460, idealWidth: 580, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .hermesSplitDetailColumn(minWidth: 460, idealWidth: 580)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .task(id: appState.activeConnectionID) {

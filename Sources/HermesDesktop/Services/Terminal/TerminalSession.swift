@@ -13,9 +13,12 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
     @Published private(set) var launchToken = UUID()
     @Published private(set) var isRunning = false
 
-    init(connection: ConnectionProfile, sshTransport: SSHTransport) {
+    init(connection: ConnectionProfile, sshTransport: SSHTransport, startupCommandLine: String? = nil) {
         self.connection = connection
-        self.sshArguments = sshTransport.shellArguments(for: connection)
+        self.sshArguments = sshTransport.shellArguments(
+            for: connection,
+            startupCommandLine: startupCommandLine
+        )
         self.terminalTitle = "\(connection.label) · \(connection.resolvedHermesProfileName)"
         viewHost.setEventHandlers(
             onProcessStart: { [weak self] in

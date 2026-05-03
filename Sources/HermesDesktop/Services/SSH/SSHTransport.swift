@@ -88,10 +88,10 @@ final class SSHTransport: @unchecked Sendable {
         }
     }
 
-    func shellArguments(for connection: ConnectionProfile) -> [String] {
+    func shellArguments(for connection: ConnectionProfile, startupCommandLine: String? = nil) -> [String] {
         sshArguments(
             for: connection,
-            remoteCommand: connection.remoteShellBootstrapCommand,
+            remoteCommand: connection.remoteShellBootstrapCommand(startupCommandLine: startupCommandLine),
             allocateTTY: true,
             purpose: .terminalShell
         )

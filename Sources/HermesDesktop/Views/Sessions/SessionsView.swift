@@ -2,10 +2,11 @@ import SwiftUI
 
 struct SessionsView: View {
     @EnvironmentObject private var appState: AppState
+    @Binding var splitLayout: HermesSplitLayout
     @State private var searchText = ""
 
     var body: some View {
-        HSplitView {
+        HermesPersistentHSplitView(layout: $splitLayout, detailMinWidth: 420) {
             VStack(alignment: .leading, spacing: 18) {
                 HermesPageHeader(
                     title: "Sessions",
@@ -30,17 +31,20 @@ struct SessionsView: View {
 
                 sessionsContent
             }
-            .frame(minWidth: 300, idealWidth: 340, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(.horizontal, 20)
             .padding(.vertical, 20)
-
+        } detail: {
             SessionDetailView(
                 session: selectedSession,
-                messages: appState.sessionMessages,
+                messages: appState.sessionMessageDisplays,
                 errorMessage: appState.sessionsError,
                 conversationError: appState.sessionConversationError,
                 isSendingMessage: appState.isSendingSessionMessage,
                 pendingTurn: appState.pendingSessionTurn,
+                onResumeInTerminal: { session in
+                    appState.resumeSessionInTerminal(session)
+                },
                 onStartSession: { prompt, autoApproveCommands in
                     await appState.startNewSession(
                         with: prompt,
@@ -54,7 +58,7 @@ struct SessionsView: View {
                     )
                 }
             )
-            .frame(minWidth: 420, idealWidth: 520, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .hermesSplitDetailColumn(minWidth: 420, idealWidth: 520)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .task(id: appState.activeConnectionID) {

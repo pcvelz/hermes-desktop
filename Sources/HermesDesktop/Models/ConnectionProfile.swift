@@ -94,6 +94,10 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     }
 
     var remoteShellBootstrapCommand: String {
+        remoteShellBootstrapCommand()
+    }
+
+    func remoteShellBootstrapCommand(startupCommandLine: String? = nil) -> String {
         let shellHomeExpression: String
         if let trimmedHermesProfile {
             let escapedProfile = trimmedHermesProfile.replacingOccurrences(of: "\"", with: "\\\"")
@@ -102,7 +106,14 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
             shellHomeExpression = "$HOME/.hermes"
         }
 
-        return "export HERMES_HOME=\"\(shellHomeExpression)\"; exec \"${SHELL:-/bin/zsh}\" -l"
+        let exportCommand = "export HERMES_HOME=\"\(shellHomeExpression)\""
+        guard let startupCommandLine,
+              !startupCommandLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return "\(exportCommand); exec \"${SHELL:-/bin/zsh}\" -l"
+        }
+
+        let escapedStartupCommand = startupCommandLine.escapedForDoubleQuotedShellArgument
+        return "\(exportCommand); exec \"${SHELL:-/bin/zsh}\" -lc \"\(escapedStartupCommand)\""
     }
 
     var workspaceScopeFingerprint: String {
@@ -162,5 +173,14 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
         }
         copy.updatedAt = Date()
         return copy
+    }
+}
+
+private extension String {
+    var escapedForDoubleQuotedShellArgument: String {
+        replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "$", with: "\\$")
+            .replacingOccurrences(of: "`", with: "\\`")
     }
 }

@@ -61,4 +61,40 @@ struct HermesChatInvocationTests {
             "Inspect the repo"
         ])
     }
+
+    @Test
+    func terminalResumeInvocationUsesDefaultHermesCommand() {
+        let connection = ConnectionProfile(
+            label: "Host",
+            sshHost: "example.local"
+        )
+        let invocation = HermesSessionResumeInvocation(
+            sessionID: "20260503_161557_453be2",
+            connection: connection
+        )
+
+        #expect(invocation.arguments == ["--resume", "20260503_161557_453be2"])
+        #expect(invocation.commandLine == "hermes --resume 20260503_161557_453be2")
+    }
+
+    @Test
+    func terminalResumeInvocationPinsCustomHermesProfile() {
+        let connection = ConnectionProfile(
+            label: "Host",
+            sshHost: "example.local",
+            hermesProfile: "researcher"
+        )
+        let invocation = HermesSessionResumeInvocation(
+            sessionID: "debug session's final turn",
+            connection: connection
+        )
+
+        #expect(invocation.arguments == [
+            "--profile",
+            "researcher",
+            "--resume",
+            "debug session's final turn"
+        ])
+        #expect(invocation.commandLine == "hermes --profile researcher --resume 'debug session'\\''s final turn'")
+    }
 }

@@ -29,6 +29,31 @@ struct HermesChatInvocation: Equatable, Sendable {
     }
 }
 
+struct HermesSessionResumeInvocation: Equatable, Sendable {
+    let sessionID: String
+    let hermesProfileName: String?
+
+    init(sessionID: String, connection: ConnectionProfile) {
+        self.sessionID = sessionID
+        self.hermesProfileName = connection.trimmedHermesProfile
+    }
+
+    var arguments: [String] {
+        var values = [String]()
+        if let hermesProfileName {
+            values.append(contentsOf: ["--profile", hermesProfileName])
+        }
+        values.append(contentsOf: ["--resume", sessionID])
+        return values
+    }
+
+    var commandLine: String {
+        (["hermes"] + arguments)
+            .map(\.shellQuotedForTerminalCommand)
+            .joined(separator: " ")
+    }
+}
+
 struct PendingSessionTurn: Identifiable, Equatable, Sendable {
     let id: UUID
     let sessionID: String?
@@ -62,5 +87,18 @@ struct HermesChatTurnResult: Codable, Sendable {
         case sessionID = "session_id"
         case stdout
         case stderr
+    }
+}
+
+private extension String {
+    var shellQuotedForTerminalCommand: String {
+        guard !isEmpty else { return "''" }
+
+        let safeCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_+-./:=@")
+        if unicodeScalars.allSatisfy({ safeCharacters.contains($0) }) {
+            return self
+        }
+
+        return "'" + replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }

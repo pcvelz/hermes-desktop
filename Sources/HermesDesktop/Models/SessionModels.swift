@@ -72,6 +72,44 @@ struct SessionMessage: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+struct SessionMessageDisplay: Identifiable, Hashable, Sendable {
+    let id: String
+    let role: SessionMessageRole
+    let content: String?
+    let timestampText: String?
+    let metadataItems: [SessionMetadataDisplayItem]
+    let toolSummary: SessionToolMessageSummary?
+
+    init(message: SessionMessage) {
+        id = message.id
+        role = message.role
+        content = message.content
+        timestampText = message.timestamp?.dateValue.map(DateFormatters.shortDateTimeString(from:))
+
+        let displayMetadata = message.displayMetadata ?? [:]
+        metadataItems = displayMetadata.keys.sorted().compactMap { key in
+            guard let value = displayMetadata[key] else { return nil }
+            return SessionMetadataDisplayItem(key: key, value: value.displayString)
+        }
+        toolSummary = message.role.isToolRole
+            ? SessionToolMessageSummary(content: message.content)
+            : nil
+    }
+
+    var isToolMessage: Bool {
+        toolSummary != nil
+    }
+}
+
+struct SessionMetadataDisplayItem: Identifiable, Hashable, Sendable {
+    let key: String
+    let value: String
+
+    var id: String {
+        key
+    }
+}
+
 enum SessionTimestamp: Codable, Hashable, Sendable {
     case unixSeconds(Double)
     case text(String)
@@ -117,6 +155,202 @@ enum SessionTimestamp: Codable, Hashable, Sendable {
     }
 }
 
+struct SessionToolMessageSummary: Hashable, Sendable {
+    let title: String
+    let preview: String?
+    let statusText: String?
+    let statusKind: SessionToolStatusKind
+    let sizeText: String?
+    let detailPreview: String?
+    let isDetailPreviewTruncated: Bool
+
+    private static let jsonParseByteLimit = 256 * 1024
+    private static let collapsedPreviewCharacterLimit = 220
+    private static let detailPreviewCharacterLimit = 5_000
+
+    init(content: String?) {
+        let byteCount = content?.utf8.count ?? 0
+        sizeText = byteCount > 0 ? Self.formattedByteCount(byteCount) : nil
+
+        if let content, !content.isEmpty {
+            let detail = Self.detailPreview(from: content)
+            detailPreview = detail.text
+            isDetailPreviewTruncated = detail.isTruncated
+        } else {
+            detailPreview = nil
+            isDetailPreviewTruncated = false
+        }
+
+        guard let content,
+              !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            title = "Tool turn"
+            preview = nil
+            statusText = nil
+            statusKind = .neutral
+            return
+        }
+
+        let payload = Self.jsonPayload(from: content)
+        statusKind = Self.statusKind(from: payload)
+        statusText = Self.statusText(for: statusKind, payload: payload)
+        title = Self.title(from: payload) ?? "Tool output"
+        preview = Self.preview(from: payload) ?? Self.snippet(from: content)
+    }
+
+    private static func jsonPayload(from content: String) -> [String: Any]? {
+        guard content.utf8.count <= jsonParseByteLimit,
+              let data = content.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let payload = object as? [String: Any] else {
+            return nil
+        }
+
+        return payload
+    }
+
+    private static func statusKind(from payload: [String: Any]?) -> SessionToolStatusKind {
+        guard let payload else { return .neutral }
+
+        if let success = payload["success"] as? Bool {
+            return success ? .success : .failure
+        }
+
+        if let exitCode = payload["exit_code"] as? Int {
+            return exitCode == 0 ? .success : .failure
+        }
+
+        if let error = stringValue(payload["error"]), !error.isEmpty {
+            return .failure
+        }
+
+        return .neutral
+    }
+
+    private static func statusText(for statusKind: SessionToolStatusKind, payload: [String: Any]?) -> String? {
+        switch statusKind {
+        case .success:
+            return "Succeeded"
+        case .failure:
+            return "Failed"
+        case .neutral:
+            guard let payload,
+                  let exitCode = payload["exit_code"] as? Int else {
+                return nil
+            }
+            return "Exit \(exitCode)"
+        }
+    }
+
+    private static func title(from payload: [String: Any]?) -> String? {
+        guard let payload else { return nil }
+
+        if let files = payload["files_modified"] as? [String], !files.isEmpty {
+            if files.count == 1, let fileName = files.first?.split(separator: "/").last {
+                return "Modified \(fileName)"
+            }
+
+            return "Modified \(files.count) files"
+        }
+
+        if let lint = payload["lint"] as? [String: Any],
+           let status = stringValue(lint["status"]),
+           !status.isEmpty {
+            return "Lint \(status)"
+        }
+
+        if let error = stringValue(payload["error"]), !error.isEmpty {
+            return "Tool error"
+        }
+
+        if let diff = stringValue(payload["diff"]), !diff.isEmpty {
+            return "Tool diff"
+        }
+
+        if let output = stringValue(payload["output"]), !output.isEmpty {
+            return "Tool output"
+        }
+
+        return nil
+    }
+
+    private static func preview(from payload: [String: Any]?) -> String? {
+        guard let payload else { return nil }
+
+        if let error = stringValue(payload["error"]), let snippet = snippet(from: error) {
+            return snippet
+        }
+
+        if let output = stringValue(payload["output"]), let snippet = snippet(from: output) {
+            return snippet
+        }
+
+        if let diff = stringValue(payload["diff"]), let snippet = snippet(from: diff) {
+            return snippet
+        }
+
+        return nil
+    }
+
+    private static func stringValue(_ value: Any?) -> String? {
+        switch value {
+        case let string as String:
+            return string.trimmingCharacters(in: .whitespacesAndNewlines)
+        case let number as NSNumber:
+            return number.stringValue
+        case .none:
+            return nil
+        default:
+            return nil
+        }
+    }
+
+    private static func snippet(from text: String) -> String? {
+        let seed = String(text.prefix(collapsedPreviewCharacterLimit * 4))
+        let normalized = seed
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !normalized.isEmpty else { return nil }
+        guard normalized.count > collapsedPreviewCharacterLimit else { return normalized }
+
+        return String(normalized.prefix(collapsedPreviewCharacterLimit - 3)) + "..."
+    }
+
+    private static func detailPreview(from content: String) -> (text: String, isTruncated: Bool) {
+        let prefix = content.prefix(detailPreviewCharacterLimit)
+        let isTruncated = prefix.endIndex < content.endIndex
+        return (String(prefix), isTruncated)
+    }
+
+    private static func formattedByteCount(_ byteCount: Int) -> String {
+        if byteCount < 1_024 {
+            return "\(byteCount) B"
+        }
+
+        if byteCount < 1_024 * 1_024 {
+            return "\(formattedDecimal(Double(byteCount) / 1_024)) KB"
+        }
+
+        return "\(formattedDecimal(Double(byteCount) / Double(1_024 * 1_024))) MB"
+    }
+
+    private static func formattedDecimal(_ value: Double) -> String {
+        let tenths = Int((value * 10).rounded())
+        if tenths % 10 == 0 {
+            return "\(tenths / 10)"
+        }
+
+        return "\(tenths / 10).\(tenths % 10)"
+    }
+}
+
+enum SessionToolStatusKind: Hashable, Sendable {
+    case success
+    case failure
+    case neutral
+}
+
 enum SessionMessageRole: Codable, Hashable, Sendable {
     case assistant
     case user
@@ -148,6 +382,23 @@ enum SessionMessageRole: Codable, Hashable, Sendable {
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return "Event" }
             return trimmed.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    var isToolRole: Bool {
+        switch self {
+        case .custom(let value):
+            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return [
+                "function",
+                "function_call",
+                "function_result",
+                "tool",
+                "tool_call",
+                "tool_result"
+            ].contains(normalized)
+        case .assistant, .user, .system, .event:
+            return false
         }
     }
 

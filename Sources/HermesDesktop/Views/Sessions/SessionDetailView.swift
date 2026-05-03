@@ -2,7 +2,7 @@ import SwiftUI
 
 private let sessionDetailBottomID = "session-detail-bottom"
 
-private func sessionMessageScrollID(_ message: SessionMessage) -> String {
+private func sessionMessageScrollID(_ message: SessionMessageDisplay) -> String {
     "session-message-\(message.id)"
 }
 
@@ -65,11 +65,12 @@ struct SessionDetailView: View {
     @EnvironmentObject private var appState: AppState
 
     let session: SessionSummary?
-    let messages: [SessionMessage]
+    let messages: [SessionMessageDisplay]
     let errorMessage: String?
     let conversationError: String?
     let isSendingMessage: Bool
     let pendingTurn: PendingSessionTurn?
+    let onResumeInTerminal: (SessionSummary) -> Void
     let onStartSession: (String, Bool) async -> Bool
     let onSendMessage: (String, Bool) async -> Bool
 
@@ -210,6 +211,9 @@ struct SessionDetailView: View {
             placeholder: session == nil ? "Start a new Hermes session…" : "Write a reply to continue this session…",
             errorMessage: conversationError,
             isSending: isSendingMessage,
+            onResumeInTerminal: session.map { selectedSession in
+                { onResumeInTerminal(selectedSession) }
+            },
             onSend: session == nil ? onStartSession : onSendMessage
         )
         .id(session?.id ?? "new-session")
@@ -369,12 +373,19 @@ private struct SessionComposerPanel: View {
     let placeholder: String
     let errorMessage: String?
     let isSending: Bool
+    let onResumeInTerminal: (() -> Void)?
     let onSend: (String, Bool) async -> Bool
 
     @State private var draft = ""
     @State private var autoApproveCommands = false
     @State private var isExpanded = false
     @FocusState private var isEditorFocused: Bool
+
+    private let compactPromptHeight: CGFloat = 24
+    private let compactPromptLeadingInset: CGFloat = 5
+    private let expandedPromptHeight: CGFloat = 96
+    private let expandedPromptHorizontalInset: CGFloat = 12
+    private let expandedPromptTopInset: CGFloat = 10
 
     private var trimmedDraft: String {
         draft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -398,6 +409,16 @@ private struct SessionComposerPanel: View {
                     .font(.headline)
 
                 Spacer()
+
+                if let onResumeInTerminal {
+                    Button(action: onResumeInTerminal) {
+                        Label(L10n.string("Resume in Terminal"), systemImage: "terminal")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(isSending)
+                    .help(L10n.string("Open this Hermes session in a fresh Terminal tab"))
+                }
             }
 
             if let errorMessage, !errorMessage.isEmpty {
@@ -433,7 +454,22 @@ private struct SessionComposerPanel: View {
     private var composerInput: some View {
         if shouldUseExpandedEditor {
             VStack(alignment: .leading, spacing: 10) {
-                promptEditor(height: 96, placeholderPadding: EdgeInsets(top: 10, leading: 12, bottom: 0, trailing: 12))
+                promptEditor(
+                    height: expandedPromptHeight,
+                    placeholderPadding: EdgeInsets(
+                        top: expandedPromptTopInset,
+                        leading: expandedPromptHorizontalInset,
+                        bottom: 0,
+                        trailing: expandedPromptHorizontalInset
+                    ),
+                    editorPadding: EdgeInsets(
+                        top: expandedPromptTopInset - 5,
+                        leading: expandedPromptHorizontalInset - 5,
+                        bottom: 0,
+                        trailing: expandedPromptHorizontalInset - 5
+                    ),
+                    showsEditorBackground: true
+                )
                     .frame(height: 108)
 
                 HStack {
@@ -443,7 +479,22 @@ private struct SessionComposerPanel: View {
             }
         } else {
             HStack(alignment: .center, spacing: 10) {
-                promptEditor(height: 28, placeholderPadding: EdgeInsets(top: 6, leading: 0, bottom: 0, trailing: 0))
+                promptEditor(
+                    height: compactPromptHeight,
+                    placeholderPadding: EdgeInsets(
+                        top: 0,
+                        leading: compactPromptLeadingInset,
+                        bottom: 0,
+                        trailing: 0
+                    ),
+                    editorPadding: EdgeInsets(
+                        top: 0,
+                        leading: compactPromptLeadingInset - 5,
+                        bottom: 0,
+                        trailing: 0
+                    ),
+                    showsEditorBackground: false
+                )
                     .frame(minWidth: 80)
 
                 controlCluster
@@ -462,17 +513,24 @@ private struct SessionComposerPanel: View {
         }
     }
 
-    private func promptEditor(height: CGFloat, placeholderPadding: EdgeInsets) -> some View {
+    private func promptEditor(
+        height: CGFloat,
+        placeholderPadding: EdgeInsets,
+        editorPadding: EdgeInsets,
+        showsEditorBackground: Bool
+    ) -> some View {
         ZStack(alignment: .topLeading) {
-            if shouldUseExpandedEditor {
+            if showsEditorBackground {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(Color.secondary.opacity(0.08))
             }
 
             if draft.isEmpty {
                 Text(L10n.string(placeholder))
+                    .font(.body)
                     .foregroundStyle(.tertiary)
                     .padding(placeholderPadding)
+                    .frame(height: height, alignment: .topLeading)
                     .allowsHitTesting(false)
             }
 
@@ -481,8 +539,7 @@ private struct SessionComposerPanel: View {
                 .textEditorStyle(.plain)
                 .scrollContentBackground(.hidden)
                 .focused($isEditorFocused)
-                .padding(.horizontal, shouldUseExpandedEditor ? 7 : 0)
-                .padding(.vertical, shouldUseExpandedEditor ? 5 : 0)
+                .padding(editorPadding)
                 .frame(height: height)
                 .disabled(isSending)
                 .onKeyPress(.return, phases: .down) { press in
@@ -495,7 +552,7 @@ private struct SessionComposerPanel: View {
                 }
         }
         .overlay {
-            if shouldUseExpandedEditor {
+            if showsEditorBackground {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
             }
@@ -628,7 +685,20 @@ private struct PendingBubble: View {
 }
 
 private struct MessageCard: View {
-    let message: SessionMessage
+    let message: SessionMessageDisplay
+
+    var body: some View {
+        if message.isToolMessage {
+            ToolMessageCard(message: message)
+        } else {
+            ConversationMessageCard(message: message)
+        }
+    }
+}
+
+private struct ConversationMessageCard: View {
+    let message: SessionMessageDisplay
+    @State private var isShowingMetadata = false
 
     var body: some View {
         HermesInsetSurface {
@@ -642,8 +712,8 @@ private struct MessageCard: View {
 
                     Spacer()
 
-                    if let timestamp = message.timestamp?.dateValue {
-                        Text(DateFormatters.shortDateTimeFormatter().string(from: timestamp))
+                    if let timestampText = message.timestampText {
+                        Text(timestampText)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -659,28 +729,11 @@ private struct MessageCard: View {
                         .italic()
                 }
 
-                if let metadata = message.displayMetadata, !metadata.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(L10n.string("Metadata"))
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-
-                        ForEach(metadata.keys.sorted(), id: \.self) { key in
-                            if let value = metadata[key] {
-                                HermesInsetSurface {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(key)
-                                            .font(.caption.weight(.semibold))
-                                            .foregroundStyle(.secondary)
-
-                                        Text(value.displayString)
-                                            .font(.caption.monospaced())
-                                            .textSelection(.enabled)
-                                    }
-                                }
-                            }
-                        }
-                    }
+                if !message.metadataItems.isEmpty {
+                    MetadataDisclosureView(
+                        items: message.metadataItems,
+                        isShowingMetadata: $isShowingMetadata
+                    )
                 }
             }
         }
@@ -704,7 +757,222 @@ private struct MessageCard: View {
     }
 }
 
-private extension Array where Element == SessionMessage {
+private struct ToolMessageCard: View {
+    let message: SessionMessageDisplay
+    @State private var isExpanded = false
+    @State private var isShowingMetadata = false
+
+    private var summary: SessionToolMessageSummary? {
+        message.toolSummary
+    }
+
+    var body: some View {
+        HermesInsetSurface {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .center, spacing: 8) {
+                    HermesBadge(text: "Tool", tint: .secondary, isMonospaced: false)
+
+                    if let summary,
+                       let statusText = summary.statusText {
+                        HermesBadge(text: statusText, tint: statusTint, isMonospaced: false)
+                    }
+
+                    if let sizeText = summary?.sizeText {
+                        Text(sizeText)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 10)
+
+                    if let timestampText = message.timestampText {
+                        Text(timestampText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        isExpanded.toggle()
+                    }
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 10, height: 20)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(summary?.title ?? L10n.string("Tool output"))
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+
+                            if let preview = summary?.preview, !preview.isEmpty {
+                                Text(preview)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(isExpanded ? 3 : 2)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            } else {
+                                Text(L10n.string("No output preview"))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        Spacer(minLength: 10)
+
+                        Text(L10n.string(isExpanded ? "Hide details" : "Details"))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+
+                if isExpanded {
+                    ToolOutputView(content: message.content, summary: summary)
+
+                    if !message.metadataItems.isEmpty {
+                        MetadataDisclosureView(
+                            items: message.metadataItems,
+                            isShowingMetadata: $isShowingMetadata
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private var statusTint: Color {
+        switch summary?.statusKind {
+        case .success:
+            return .green
+        case .failure:
+            return .red
+        case .neutral, .none:
+            return .secondary
+        }
+    }
+}
+
+private struct ToolOutputView: View {
+    let content: String?
+    let summary: SessionToolMessageSummary?
+    @State private var isShowingFullOutput = false
+
+    private var visibleContent: String? {
+        guard isShowingFullOutput else {
+            return summary?.detailPreview
+        }
+
+        return content
+    }
+
+    private var isTruncated: Bool {
+        summary?.isDetailPreviewTruncated == true && !isShowingFullOutput
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let visibleContent, !visibleContent.isEmpty {
+                ScrollView {
+                    Text(visibleContent)
+                        .font(.caption.monospaced())
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                }
+                .frame(maxHeight: isShowingFullOutput ? 280 : 180)
+                .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            } else {
+                Text(L10n.string("No text payload"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .italic()
+            }
+
+            if isTruncated {
+                Button {
+                    isShowingFullOutput = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                        Text(L10n.string("Show full output"))
+                    }
+                    .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .help(L10n.string("Render the full tool output on demand"))
+            }
+        }
+    }
+}
+
+private struct MetadataDisclosureView: View {
+    let items: [SessionMetadataDisplayItem]
+    @Binding var isShowingMetadata: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    isShowingMetadata.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isShowingMetadata ? "chevron.down" : "chevron.right")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 10)
+
+                    Text(L10n.string("Metadata"))
+                        .font(.caption.weight(.semibold))
+
+                    Text("(\(items.count))")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+
+            if isShowingMetadata {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(items) { item in
+                        MetadataItemView(item: item)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct MetadataItemView: View {
+    let item: SessionMetadataDisplayItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(item.key)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(item.value)
+                .font(.caption.monospaced())
+                .textSelection(.enabled)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.secondary.opacity(0.07))
+        )
+    }
+}
+
+private extension Array where Element == SessionMessageDisplay {
     func containsUserPrompt(_ prompt: String) -> Bool {
         let normalizedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedPrompt.isEmpty else { return false }

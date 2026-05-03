@@ -66,4 +66,31 @@ struct ConnectionProfileTests {
                 "export HERMES_HOME=\"$HOME/.hermes/profiles/research\\\"lab\"; exec \"${SHELL:-/bin/zsh}\" -l"
         )
     }
+
+    @Test
+    func startupCommandRunsThroughLoginShellWithoutInputInjection() {
+        let profile = ConnectionProfile(
+            label: "Research Host",
+            sshHost: "example.com",
+            hermesProfile: "researcher"
+        ).updated()
+
+        #expect(
+            profile.remoteShellBootstrapCommand(startupCommandLine: "hermes --profile researcher --resume 'debug session'\\''s final turn'") ==
+                "export HERMES_HOME=\"$HOME/.hermes/profiles/researcher\"; exec \"${SHELL:-/bin/zsh}\" -lc \"hermes --profile researcher --resume 'debug session'\\\\''s final turn'\""
+        )
+    }
+
+    @Test
+    func startupCommandEscapesDoubleQuotedShellExpansion() {
+        let profile = ConnectionProfile(
+            label: "Default",
+            sshHost: "example.com"
+        ).updated()
+
+        #expect(
+            profile.remoteShellBootstrapCommand(startupCommandLine: "printf \"$HOME `whoami`\"") ==
+                "export HERMES_HOME=\"$HOME/.hermes\"; exec \"${SHELL:-/bin/zsh}\" -lc \"printf \\\"\\$HOME \\`whoami\\`\\\"\""
+        )
+    }
 }

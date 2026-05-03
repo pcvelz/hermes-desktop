@@ -283,3 +283,204 @@ struct HermesExpandableSearchField: View {
         }
     }
 }
+
+struct HermesSplitLayout: Equatable {
+    let minPrimaryWidth: CGFloat
+    let defaultPrimaryWidth: CGFloat
+    let maxPrimaryWidth: CGFloat
+    var primaryWidth: CGFloat?
+
+    init(
+        minPrimaryWidth: CGFloat,
+        defaultPrimaryWidth: CGFloat,
+        maxPrimaryWidth: CGFloat = 760
+    ) {
+        self.minPrimaryWidth = minPrimaryWidth
+        self.defaultPrimaryWidth = defaultPrimaryWidth
+        self.maxPrimaryWidth = max(maxPrimaryWidth, minPrimaryWidth)
+    }
+
+    var preferredPrimaryWidth: CGFloat {
+        clamped(primaryWidth ?? defaultPrimaryWidth)
+    }
+
+    mutating func rememberPrimaryWidth(_ width: CGFloat) {
+        guard width.isFinite, width > 0 else { return }
+
+        let clampedWidth = clamped(width)
+        if let primaryWidth, abs(primaryWidth - clampedWidth) < 1 {
+            return
+        }
+
+        primaryWidth = clampedWidth
+    }
+
+    private func clamped(_ width: CGFloat) -> CGFloat {
+        min(max(width, minPrimaryWidth), maxPrimaryWidth)
+    }
+}
+
+extension View {
+    func hermesSplitDetailColumn(minWidth: CGFloat, idealWidth: CGFloat) -> some View {
+        frame(
+            minWidth: minWidth,
+            idealWidth: idealWidth,
+            maxWidth: .infinity,
+            maxHeight: .infinity,
+            alignment: .topLeading
+        )
+    }
+}
+
+struct HermesPersistentHSplitView<Primary: View, Detail: View>: NSViewRepresentable {
+    @Binding var layout: HermesSplitLayout
+    let detailMinWidth: CGFloat
+    let primary: Primary
+    let detail: Detail
+
+    init(
+        layout: Binding<HermesSplitLayout>,
+        detailMinWidth: CGFloat,
+        @ViewBuilder primary: () -> Primary,
+        @ViewBuilder detail: () -> Detail
+    ) {
+        self._layout = layout
+        self.detailMinWidth = detailMinWidth
+        self.primary = primary()
+        self.detail = detail()
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> NSSplitView {
+        let splitView = NSSplitView()
+        splitView.isVertical = true
+        splitView.dividerStyle = .thin
+        splitView.delegate = context.coordinator
+
+        let primaryHost = NSHostingView(rootView: primary)
+        primaryHost.translatesAutoresizingMaskIntoConstraints = false
+
+        let detailHost = NSHostingView(rootView: detail)
+        detailHost.translatesAutoresizingMaskIntoConstraints = false
+
+        splitView.addArrangedSubview(primaryHost)
+        splitView.addArrangedSubview(detailHost)
+
+        context.coordinator.primaryHost = primaryHost
+        context.coordinator.detailHost = detailHost
+        context.coordinator.layout = $layout
+        context.coordinator.detailMinWidth = detailMinWidth
+
+        context.coordinator.restoreDividerPosition(in: splitView)
+        return splitView
+    }
+
+    func updateNSView(_ splitView: NSSplitView, context: Context) {
+        context.coordinator.primaryHost?.rootView = primary
+        context.coordinator.detailHost?.rootView = detail
+        context.coordinator.layout = $layout
+        context.coordinator.detailMinWidth = detailMinWidth
+        context.coordinator.restoreDividerPosition(in: splitView)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSSplitViewDelegate {
+        var primaryHost: NSHostingView<Primary>?
+        var detailHost: NSHostingView<Detail>?
+        var layout: Binding<HermesSplitLayout>?
+        var detailMinWidth: CGFloat = 420
+        private var isRestoringDivider = false
+        private var hasRestoredDivider = false
+
+        func restoreDividerPosition(in splitView: NSSplitView) {
+            guard splitView.subviews.count > 1, let layout else { return }
+
+            if splitView.bounds.width <= 0 {
+                DispatchQueue.main.async { [weak self, weak splitView] in
+                    guard let self, let splitView else { return }
+                    self.restoreDividerPosition(in: splitView)
+                }
+                return
+            }
+
+            let restoredWidth = constrainedPrimaryWidth(
+                layout.wrappedValue.preferredPrimaryWidth,
+                in: splitView
+            )
+            let currentWidth = splitView.subviews[0].frame.width
+            guard abs(currentWidth - restoredWidth) > 1 else {
+                hasRestoredDivider = true
+                return
+            }
+
+            isRestoringDivider = true
+            splitView.setPosition(restoredWidth, ofDividerAt: 0)
+            splitView.adjustSubviews()
+            isRestoringDivider = false
+            hasRestoredDivider = true
+        }
+
+        func splitViewDidResizeSubviews(_ notification: Notification) {
+            guard !isRestoringDivider,
+                  hasRestoredDivider,
+                  let splitView = notification.object as? NSSplitView,
+                  let layout,
+                  !splitView.subviews.isEmpty else {
+                return
+            }
+
+            let width = splitView.subviews[0].frame.width
+            guard width.isFinite, width > 0 else { return }
+
+            var updatedLayout = layout.wrappedValue
+            updatedLayout.rememberPrimaryWidth(width)
+            if updatedLayout != layout.wrappedValue {
+                layout.wrappedValue = updatedLayout
+            }
+        }
+
+        func splitView(
+            _ splitView: NSSplitView,
+            constrainMinCoordinate proposedMinimumPosition: CGFloat,
+            ofSubviewAt dividerIndex: Int
+        ) -> CGFloat {
+            layout?.wrappedValue.minPrimaryWidth ?? proposedMinimumPosition
+        }
+
+        func splitView(
+            _ splitView: NSSplitView,
+            constrainMaxCoordinate proposedMaximumPosition: CGFloat,
+            ofSubviewAt dividerIndex: Int
+        ) -> CGFloat {
+            guard let layout else { return proposedMaximumPosition }
+            return max(
+                layout.wrappedValue.minPrimaryWidth,
+                min(
+                    layout.wrappedValue.maxPrimaryWidth,
+                    splitView.bounds.width - detailMinWidth - splitView.dividerThickness
+                )
+            )
+        }
+
+        func splitView(_ splitView: NSSplitView, shouldAdjustSizeOfSubview view: NSView) -> Bool {
+            view === detailHost
+        }
+
+        private func constrainedPrimaryWidth(_ width: CGFloat, in splitView: NSSplitView) -> CGFloat {
+            guard let layout else { return width }
+
+            let maxWidth = max(
+                layout.wrappedValue.minPrimaryWidth,
+                min(
+                    layout.wrappedValue.maxPrimaryWidth,
+                    splitView.bounds.width - detailMinWidth - splitView.dividerThickness
+                )
+            )
+
+            return min(max(width, layout.wrappedValue.minPrimaryWidth), maxWidth)
+        }
+    }
+}

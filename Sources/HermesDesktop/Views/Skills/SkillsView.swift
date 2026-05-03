@@ -2,13 +2,14 @@ import SwiftUI
 
 struct SkillsView: View {
     @EnvironmentObject private var appState: AppState
+    @Binding var splitLayout: HermesSplitLayout
     @State private var searchText = ""
     @State private var editorMode: SkillEditorMode?
     @State private var editorDraft = SkillDraft()
     @State private var rawMarkdownContent = ""
 
     var body: some View {
-        HSplitView {
+        HermesPersistentHSplitView(layout: $splitLayout, detailMinWidth: 420) {
             VStack(alignment: .leading, spacing: 18) {
                 HermesPageHeader(
                     title: "Skills",
@@ -32,12 +33,12 @@ struct SkillsView: View {
 
                 skillsContent
             }
-            .frame(minWidth: 300, idealWidth: 340, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(.horizontal, 20)
             .padding(.vertical, 20)
-
+        } detail: {
             detailContent
-                .frame(minWidth: 420, idealWidth: 560, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .hermesSplitDetailColumn(minWidth: 420, idealWidth: 560)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .task(id: appState.activeConnectionID) {

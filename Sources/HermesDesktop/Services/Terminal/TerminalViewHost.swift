@@ -110,6 +110,8 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
         hostView.isHidden = !isActive
         if !isActive {
             hostView.window?.makeFirstResponder(nil)
+        } else {
+            hostView.window?.makeFirstResponder(hostView.terminalView)
         }
     }
 
