@@ -705,7 +705,12 @@ final class AppState: ObservableObject {
         }
     }
 
-    func loadSessions(reset: Bool = false, query: String? = nil) async {
+    func loadSessions(
+        reset: Bool = false,
+        query: String? = nil,
+        preferredSessionID: String? = nil,
+        allowsFallbackSelection: Bool = true
+    ) async {
         guard let profile = activeConnection else { return }
 
         let normalizedQuery = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? sessionSearchQuery
@@ -748,19 +753,25 @@ final class AppState: ObservableObject {
             isLoadingSessions = false
 
             if reset {
-                let preferredSessionID: String?
-                if let previousSelectedSessionID,
+                let resolvedPreferredSessionID: String?
+                if let explicitPreferredSessionID = preferredSessionID,
+                   sessions.contains(where: { $0.id == explicitPreferredSessionID }) ||
+                    isSessionPinned(explicitPreferredSessionID) {
+                    resolvedPreferredSessionID = explicitPreferredSessionID
+                } else if let previousSelectedSessionID,
                    sessions.contains(where: { $0.id == previousSelectedSessionID }) ||
                     isSessionPinned(previousSelectedSessionID) {
-                    preferredSessionID = previousSelectedSessionID
+                    resolvedPreferredSessionID = previousSelectedSessionID
+                } else if !allowsFallbackSelection {
+                    resolvedPreferredSessionID = nil
                 } else {
-                    preferredSessionID = normalizedQuery.isEmpty
+                    resolvedPreferredSessionID = normalizedQuery.isEmpty
                         ? pinnedSessionSummaries.first?.id ?? sessions.first?.id
                         : sessions.first?.id
                 }
 
-                if let preferredSessionID {
-                    await loadSessionDetail(sessionID: preferredSessionID)
+                if let resolvedPreferredSessionID {
+                    await loadSessionDetail(sessionID: resolvedPreferredSessionID)
                 } else {
                     selectedSessionID = nil
                     clearSessionMessages()
@@ -817,6 +828,8 @@ final class AppState: ObservableObject {
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPrompt.isEmpty else { return false }
 
+        let existingVisibleSessionIDs = Set((sessions + pinnedSessionSummaries).map(\.id))
+
         isSendingSessionMessage = true
         pendingSessionTurn = PendingSessionTurn(
             sessionID: nil,
@@ -827,7 +840,7 @@ final class AppState: ObservableObject {
         sessionsError = nil
 
         do {
-            _ = try await hermesChatService.sendMessage(
+            let turnResult = try await hermesChatService.sendMessage(
                 trimmedPrompt,
                 sessionID: nil,
                 connection: profile,
@@ -838,7 +851,23 @@ final class AppState: ObservableObject {
             isSendingSessionMessage = false
             pendingSessionTurn = nil
             sessionSearchQuery = ""
-            await loadSessions(reset: true, query: "")
+            await loadSessions(
+                reset: true,
+                query: "",
+                preferredSessionID: turnResult.sessionID,
+                allowsFallbackSelection: false
+            )
+
+            let createdSessionID = turnResult.sessionID ??
+                likelyNewSessionID(
+                    afterStartingWith: trimmedPrompt,
+                    excluding: existingVisibleSessionIDs
+                ) ??
+                sessions.first?.id
+
+            if let createdSessionID {
+                await loadSessionDetail(sessionID: createdSessionID)
+            }
             return true
         } catch {
             guard isActiveWorkspace(profile) else { return false }
@@ -848,6 +877,45 @@ final class AppState: ObservableObject {
             setStatusMessage(L10n.string("Unable to start Hermes session"))
             return false
         }
+    }
+
+    private func likelyNewSessionID(
+        afterStartingWith prompt: String,
+        excluding existingSessionIDs: Set<String>
+    ) -> String? {
+        let newSessions = sessions.filter { !existingSessionIDs.contains($0.id) }
+        guard !newSessions.isEmpty else { return nil }
+
+        let normalizedPrompt = Self.normalizedSessionSelectionText(prompt)
+        guard !normalizedPrompt.isEmpty else {
+            return newSessions.first?.id
+        }
+
+        return newSessions.first { summary in
+            Self.sessionSummary(summary, matchesNewSessionPrompt: normalizedPrompt)
+        }?.id ?? newSessions.first?.id
+    }
+
+    nonisolated private static func sessionSummary(
+        _ summary: SessionSummary,
+        matchesNewSessionPrompt normalizedPrompt: String
+    ) -> Bool {
+        [summary.title, summary.preview].contains { candidate in
+            let normalizedCandidate = normalizedSessionSelectionText(candidate ?? "")
+            guard !normalizedCandidate.isEmpty else { return false }
+
+            return normalizedPrompt.hasPrefix(normalizedCandidate) ||
+                normalizedCandidate.hasPrefix(normalizedPrompt) ||
+                normalizedCandidate.contains(normalizedPrompt)
+        }
+    }
+
+    nonisolated private static func normalizedSessionSelectionText(_ text: String) -> String {
+        text
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
     }
 
     func sendMessageToSelectedSession(_ prompt: String, autoApproveCommands: Bool) async -> Bool {
