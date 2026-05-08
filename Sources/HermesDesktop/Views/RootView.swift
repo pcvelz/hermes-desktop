@@ -132,6 +132,24 @@ struct RootView: View {
 
     @ViewBuilder
     private var activeDetailContent: some View {
+        if appState.activeConnection == nil {
+            ConnectionsView()
+        } else {
+            ZStack {
+                SessionsView(splitLayout: $sessionsSplitLayout, isActive: appState.selectedSection == .sessions)
+                    .opacity(appState.selectedSection == .sessions ? 1 : 0)
+                    .allowsHitTesting(appState.selectedSection == .sessions)
+                    .accessibilityHidden(appState.selectedSection != .sessions)
+
+                if appState.selectedSection != .sessions {
+                    nonSessionDetailContent
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var nonSessionDetailContent: some View {
         switch appState.selectedSection {
         case .connections:
             ConnectionsView()
@@ -140,7 +158,7 @@ struct RootView: View {
         case .files:
             FilesView(splitLayout: $filesSplitLayout)
         case .sessions:
-            SessionsView(splitLayout: $sessionsSplitLayout)
+            EmptyView()
         case .cronjobs:
             CronJobsView(splitLayout: $cronJobsSplitLayout)
         case .kanban:

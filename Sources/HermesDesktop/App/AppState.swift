@@ -104,6 +104,7 @@ final class AppState: ObservableObject {
     private var pendingSessionReloadQuery: String?
     private var pendingSectionEntryAction: PendingSectionEntryAction?
     private var isNewSessionComposerActive = false
+    private var sessionScrollOffsets: [String: CGFloat] = [:]
     private var sessionMessageSignature = SessionMessageSignature(messages: [])
     private var connectionTestRequestID: UUID?
     private var hasPerformedAutomaticUpdateCheck = false
@@ -893,6 +894,7 @@ final class AppState: ObservableObject {
         if selectedSessionID != sessionID {
             clearSessionMessages()
         }
+        clearSessionScrollOffset(for: sessionID)
         isNewSessionComposerActive = false
         selectedSessionID = sessionID
         sessionsError = nil
@@ -919,6 +921,23 @@ final class AppState: ObservableObject {
         clearSessionMessages()
         sessionsError = nil
         sessionConversationError = nil
+    }
+
+    func savedSessionScrollOffset(for sessionID: String) -> CGFloat? {
+        sessionScrollOffsets[sessionID]
+    }
+
+    func saveSessionScrollOffset(_ offset: CGFloat?, for sessionID: String) {
+        guard let offset else {
+            sessionScrollOffsets.removeValue(forKey: sessionID)
+            return
+        }
+
+        sessionScrollOffsets[sessionID] = offset
+    }
+
+    private func clearSessionScrollOffset(for sessionID: String) {
+        sessionScrollOffsets.removeValue(forKey: sessionID)
     }
 
     func startNewSession(with prompt: String, autoApproveCommands: Bool) async -> Bool {

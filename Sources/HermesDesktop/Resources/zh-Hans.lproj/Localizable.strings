@@ -494,6 +494,8 @@
 "Navigate" = "导航";
 "New Chat" = "新建聊天";
 "New Terminal Tab" = "新建终端标签页";
+"Jump to Latest" = "跳到最新";
+"Scroll to the latest message" = "滚动到最新消息";
 "Refresh Current Section" = "刷新当前区域";
 "Save Current File" = "保存当前文件";
 "Show %@" = "显示 %@";

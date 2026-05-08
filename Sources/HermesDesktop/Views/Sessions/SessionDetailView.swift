@@ -78,6 +78,9 @@ struct SessionDetailView: View {
     let isSendingMessage: Bool
     let isDeletingSession: Bool
     let pendingTurn: PendingSessionTurn?
+    let isActive: Bool
+    let savedScrollOffset: CGFloat?
+    let onSaveScrollOffset: (String, CGFloat?) -> Void
     let onResumeInTerminal: (SessionSummary) -> Void
     let onDeleteSession: (SessionSummary) async -> Void
     let onStartSession: (String, Bool) async -> Bool
@@ -86,6 +89,9 @@ struct SessionDetailView: View {
     @State private var showDeleteConfirmation = false
     @State private var scrollRequest = SessionScrollRequest()
     @State private var expandedMetadataMessageIDs: Set<String> = []
+    @State private var scrollMetrics = SessionScrollMetrics()
+    @State private var scrollOffsetRestoreRequestID = UUID()
+    @State private var shouldAutoScrollNextMessageLoad = true
 
     private var latestMessageScrollKey: String {
         "\(messages.count):\(messages.last?.id ?? "none")"
@@ -105,22 +111,45 @@ struct SessionDetailView: View {
                     .padding(.horizontal, 24)
                     .padding(.vertical, 22)
                 }
+                .background {
+                    SessionScrollOffsetObserver(
+                        sessionID: session?.id,
+                        savedOffset: savedScrollOffset,
+                        restoreRequestID: scrollOffsetRestoreRequestID,
+                        onSaveOffset: onSaveScrollOffset,
+                        onMetricsChange: { metrics in
+                            scrollMetrics = metrics
+                        }
+                    )
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    if shouldShowJumpToLatestButton {
+                        Button {
+                            requestScrollToLatest(proxy, reason: .pendingTurnChanged)
+                        } label: {
+                            Label(L10n.string("Jump to Latest"), systemImage: "arrow.down.to.line")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .padding(18)
+                        .transition(.opacity)
+                        .help(L10n.string("Scroll to the latest message"))
+                    }
+                }
                 .onChange(of: session?.id) { _, _ in
                     expandedMetadataMessageIDs.removeAll()
-                    requestScrollToLatest(proxy, reason: .sessionChanged)
+                    shouldAutoScrollNextMessageLoad = true
+                    restoreSavedScrollOffsetOrScrollToLatest(proxy)
                 }
                 .onChange(of: latestMessageScrollKey) { _, _ in
                     guard session != nil, !messages.isEmpty else { return }
-                    requestScrollToLatest(
-                        proxy,
-                        reason: pendingTurn == nil ? .messagesLoaded : .messagesChangedWhilePending
-                    )
+                    handleMessageScrollChange(proxy)
                 }
                 .onChange(of: pendingTurn?.id) { _, _ in
                     requestScrollToLatest(proxy, reason: .pendingTurnChanged)
                 }
                 .task(id: session?.id) {
-                    requestScrollToLatest(proxy, reason: .sessionChanged)
+                    restoreSavedScrollOffsetOrScrollToLatest(proxy)
                 }
             }
 
@@ -248,22 +277,81 @@ struct SessionDetailView: View {
         }
     }
 
+    private var shouldShowJumpToLatestButton: Bool {
+        guard session != nil,
+              hasLatestTranscriptTarget,
+              !scrollRequest.isPending else {
+            return false
+        }
+
+        return scrollMetrics.distanceToBottom > 96
+    }
+
+    private var hasLatestTranscriptTarget: Bool {
+        if !messages.isEmpty {
+            return true
+        }
+
+        guard let pendingTurn else { return false }
+        return pendingTurn.sessionID == nil || pendingTurn.sessionID == session?.id
+    }
+
+    private var isNearLatest: Bool {
+        scrollMetrics.distanceToBottom <= 96
+    }
+
+    private func handleMessageScrollChange(_ proxy: ScrollViewProxy) {
+        if pendingTurn != nil {
+            shouldAutoScrollNextMessageLoad = false
+            requestScrollToLatest(proxy, reason: .messagesChangedWhilePending)
+            return
+        }
+
+        if shouldAutoScrollNextMessageLoad {
+            shouldAutoScrollNextMessageLoad = false
+            requestScrollToLatest(proxy, reason: .messagesLoaded)
+            return
+        }
+
+        guard isActive, isNearLatest else { return }
+        requestScrollToLatest(proxy, reason: .messagesLoaded)
+    }
+
+    private func restoreSavedScrollOffsetOrScrollToLatest(_ proxy: ScrollViewProxy) {
+        if savedScrollOffset != nil {
+            let request = SessionScrollRequest(reason: .sessionChanged)
+            scrollRequest = request
+            scrollOffsetRestoreRequestID = UUID()
+
+            let followUpDelay = SessionScrollReason.sessionChanged.followUpDelay ?? .milliseconds(360)
+            DispatchQueue.main.asyncAfter(deadline: .now() + followUpDelay) {
+                guard scrollRequest == request else { return }
+                scrollRequest = SessionScrollRequest()
+            }
+            return
+        }
+
+        requestScrollToLatest(proxy, reason: .sessionChanged)
+    }
+
     private func requestScrollToLatest(_ proxy: ScrollViewProxy, reason: SessionScrollReason) {
         let request = SessionScrollRequest(reason: reason)
         scrollRequest = request
 
-        scheduleScrollToLatest(
+        scheduleScroll(
             proxy,
             request: request,
+            target: latestScrollTarget,
             reason: reason,
             delay: reason.delay,
             completesRequest: reason.followUpDelay == nil
         )
 
         if let followUpDelay = reason.followUpDelay {
-            scheduleScrollToLatest(
+            scheduleScroll(
                 proxy,
                 request: request,
+                target: latestScrollTarget,
                 reason: reason,
                 delay: followUpDelay,
                 completesRequest: true
@@ -271,16 +359,16 @@ struct SessionDetailView: View {
         }
     }
 
-    private func scheduleScrollToLatest(
+    private func scheduleScroll(
         _ proxy: ScrollViewProxy,
         request: SessionScrollRequest,
+        target: (id: String, anchor: UnitPoint),
         reason: SessionScrollReason,
         delay: DispatchTimeInterval,
         completesRequest: Bool
     ) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             guard scrollRequest == request else { return }
-            let target = latestScrollTarget
 
             if reason.animated {
                 withAnimation(.easeOut(duration: 0.2)) {
@@ -306,6 +394,227 @@ struct SessionDetailView: View {
         }
 
         return (sessionDetailBottomID, .bottom)
+    }
+}
+
+private struct SessionScrollMetrics: Equatable {
+    var offset: CGFloat = 0
+    var maxOffset: CGFloat = 0
+
+    var distanceToBottom: CGFloat {
+        max(0, maxOffset - offset)
+    }
+}
+
+private struct SessionScrollOffsetObserver: NSViewRepresentable {
+    let sessionID: String?
+    let savedOffset: CGFloat?
+    let restoreRequestID: UUID
+    let onSaveOffset: (String, CGFloat?) -> Void
+    let onMetricsChange: (SessionScrollMetrics) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> SessionScrollOffsetProbeView {
+        let view = SessionScrollOffsetProbeView()
+        view.coordinator = context.coordinator
+        return view
+    }
+
+    func updateNSView(_ nsView: SessionScrollOffsetProbeView, context: Context) {
+        context.coordinator.configure(
+            sessionID: sessionID,
+            savedOffset: savedOffset,
+            restoreRequestID: restoreRequestID,
+            onSaveOffset: onSaveOffset,
+            onMetricsChange: onMetricsChange
+        )
+        nsView.attachWhenReady()
+    }
+
+    final class Coordinator: NSObject, @unchecked Sendable {
+        private weak var scrollView: NSScrollView?
+        private var boundsObserver: NSObjectProtocol?
+        private var frameObserver: NSObjectProtocol?
+        private var sessionID: String?
+        private var savedOffset: CGFloat?
+        private var restoreRequestID: UUID?
+        private var lastAppliedRestoreRequestID: UUID?
+        private var isRestoring = false
+        private var onSaveOffset: ((String, CGFloat?) -> Void)?
+        private var onMetricsChange: ((SessionScrollMetrics) -> Void)?
+
+        @MainActor
+        func configure(
+            sessionID: String?,
+            savedOffset: CGFloat?,
+            restoreRequestID: UUID,
+            onSaveOffset: @escaping (String, CGFloat?) -> Void,
+            onMetricsChange: @escaping (SessionScrollMetrics) -> Void
+        ) {
+            self.sessionID = sessionID
+            self.savedOffset = savedOffset
+            self.restoreRequestID = restoreRequestID
+            self.onSaveOffset = onSaveOffset
+            self.onMetricsChange = onMetricsChange
+            restoreIfNeeded()
+            reportCurrentOffset(shouldSave: false)
+        }
+
+        @MainActor
+        func attach(to scrollView: NSScrollView?) {
+            guard self.scrollView !== scrollView else {
+                restoreIfNeeded()
+                reportCurrentOffset(shouldSave: false)
+                return
+            }
+
+            detach()
+            self.scrollView = scrollView
+
+            guard let scrollView else { return }
+            let clipView = scrollView.contentView
+            clipView.postsBoundsChangedNotifications = true
+
+            boundsObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: clipView,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.reportCurrentOffset(shouldSave: true)
+                }
+            }
+
+            if let documentView = scrollView.documentView {
+                documentView.postsFrameChangedNotifications = true
+                frameObserver = NotificationCenter.default.addObserver(
+                    forName: NSView.frameDidChangeNotification,
+                    object: documentView,
+                    queue: .main
+                ) { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        self?.reportCurrentOffset(shouldSave: false)
+                    }
+                }
+            }
+
+            restoreIfNeeded()
+            reportCurrentOffset(shouldSave: false)
+        }
+
+        deinit {
+            if let boundsObserver {
+                NotificationCenter.default.removeObserver(boundsObserver)
+            }
+            if let frameObserver {
+                NotificationCenter.default.removeObserver(frameObserver)
+            }
+        }
+
+        @MainActor
+        private func detach() {
+            if let boundsObserver {
+                NotificationCenter.default.removeObserver(boundsObserver)
+            }
+            if let frameObserver {
+                NotificationCenter.default.removeObserver(frameObserver)
+            }
+            boundsObserver = nil
+            frameObserver = nil
+        }
+
+        @MainActor
+        private func restoreIfNeeded() {
+            guard let restoreRequestID,
+                  lastAppliedRestoreRequestID != restoreRequestID,
+                  savedOffset != nil else {
+                return
+            }
+
+            lastAppliedRestoreRequestID = restoreRequestID
+            restoreSavedOffset(after: .milliseconds(40))
+            restoreSavedOffset(after: .milliseconds(220))
+        }
+
+        @MainActor
+        private func restoreSavedOffset(after delay: DispatchTimeInterval) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self,
+                      let scrollView,
+                      let savedOffset else {
+                    return
+                }
+
+                isRestoring = true
+                let target = clampedOffset(savedOffset, in: scrollView)
+                let clipView = scrollView.contentView
+                clipView.scroll(to: NSPoint(x: clipView.bounds.origin.x, y: target))
+                scrollView.reflectScrolledClipView(clipView)
+                reportCurrentOffset(shouldSave: false)
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(80)) { [weak self] in
+                    guard let self else { return }
+                    isRestoring = false
+                    reportCurrentOffset(shouldSave: true)
+                }
+            }
+        }
+
+        @MainActor
+        private func reportCurrentOffset(shouldSave: Bool) {
+            guard let scrollView else { return }
+
+            let offset = clampedOffset(scrollView.contentView.bounds.origin.y, in: scrollView)
+            let metrics = SessionScrollMetrics(
+                offset: offset,
+                maxOffset: maxOffset(in: scrollView)
+            )
+
+            onMetricsChange?(metrics)
+
+            guard shouldSave,
+                  !isRestoring,
+                  let sessionID else {
+                return
+            }
+
+            onSaveOffset?(sessionID, offset)
+        }
+
+        @MainActor
+        private func maxOffset(in scrollView: NSScrollView) -> CGFloat {
+            guard let documentView = scrollView.documentView else { return 0 }
+            return max(0, documentView.bounds.height - scrollView.contentView.bounds.height)
+        }
+
+        @MainActor
+        private func clampedOffset(_ offset: CGFloat, in scrollView: NSScrollView) -> CGFloat {
+            min(max(0, offset), maxOffset(in: scrollView))
+        }
+    }
+}
+
+private final class SessionScrollOffsetProbeView: NSView {
+    weak var coordinator: SessionScrollOffsetObserver.Coordinator?
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        attachWhenReady()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        attachWhenReady()
+    }
+
+    func attachWhenReady() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            coordinator?.attach(to: enclosingScrollView)
+        }
     }
 }
 
@@ -359,6 +668,7 @@ private struct SessionSummaryPanel: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                        .fixedSize(horizontal: true, vertical: false)
                         .help(L10n.string("More session actions"))
                         .accessibilityLabel(L10n.string("More session actions"))
                         .disabled(isDeleting)

@@ -494,6 +494,8 @@
 "Navigate" = "Навигация";
 "New Chat" = "Новый чат";
 "New Terminal Tab" = "Новая вкладка Терминала";
+"Jump to Latest" = "К последнему";
+"Scroll to the latest message" = "Прокрутить к последнему сообщению";
 "Refresh Current Section" = "Обновить текущий раздел";
 "Save Current File" = "Сохранить текущий файл";
 "Show %@" = "Показать %@";

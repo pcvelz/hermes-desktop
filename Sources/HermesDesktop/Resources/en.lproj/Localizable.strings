@@ -494,6 +494,8 @@
 "Navigate" = "Navigate";
 "New Chat" = "New Chat";
 "New Terminal Tab" = "New Terminal Tab";
+"Jump to Latest" = "Jump to Latest";
+"Scroll to the latest message" = "Scroll to the latest message";
 "Refresh Current Section" = "Refresh Current Section";
 "Save Current File" = "Save Current File";
 "Show %@" = "Show %@";

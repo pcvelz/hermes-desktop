@@ -4,6 +4,7 @@ import SwiftUI
 struct SessionsView: View {
     @EnvironmentObject private var appState: AppState
     @Binding var splitLayout: HermesSplitLayout
+    let isActive: Bool
     @State private var searchText = ""
 
     var body: some View {
@@ -39,6 +40,13 @@ struct SessionsView: View {
                     appState.isDeletingSession && appState.selectedSessionID == selectedSession.id
                 } ?? false,
                 pendingTurn: appState.pendingSessionTurn,
+                isActive: isActive,
+                savedScrollOffset: selectedSession.flatMap { selectedSession in
+                    appState.savedSessionScrollOffset(for: selectedSession.id)
+                },
+                onSaveScrollOffset: { sessionID, offset in
+                    appState.saveSessionScrollOffset(offset, for: sessionID)
+                },
                 onResumeInTerminal: { session in
                     appState.resumeSessionInTerminal(session)
                 },
@@ -61,12 +69,14 @@ struct SessionsView: View {
             .hermesSplitDetailColumn(minWidth: 420, idealWidth: 520)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .task(id: appState.activeConnectionID) {
+        .task(id: sessionsLoadTaskID) {
+            guard isActive else { return }
             if appState.sessions.isEmpty {
                 await appState.loadSessions(reset: true)
             }
         }
-        .task(id: searchText) {
+        .task(id: searchTaskID) {
+            guard isActive else { return }
             guard appState.activeConnectionID != nil else { return }
 
             let normalizedQuery = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -76,6 +86,14 @@ struct SessionsView: View {
             guard !Task.isCancelled else { return }
             await appState.loadSessions(reset: true, query: searchText)
         }
+    }
+
+    private var sessionsLoadTaskID: String {
+        "\(isActive):\(appState.activeConnectionID?.uuidString ?? "none")"
+    }
+
+    private var searchTaskID: String {
+        "\(isActive):\(searchText)"
     }
 
     @ViewBuilder
