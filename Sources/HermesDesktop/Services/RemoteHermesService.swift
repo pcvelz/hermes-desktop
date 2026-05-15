@@ -11,7 +11,8 @@ final class RemoteHermesService: @unchecked Sendable {
         let script = try RemotePythonScript.wrap(
             RemoteDiscoveryRequest(
                 hermesHome: connection.remoteHermesHomePath,
-                profileName: connection.resolvedHermesProfileName
+                profileName: connection.cliHermesProfileName,
+                customHomeMode: connection.usesCustomHermesHome
             ),
             body: discoveryScript
         )
@@ -55,23 +56,6 @@ final class RemoteHermesService: @unchecked Sendable {
                     conn.close()
                 except Exception:
                     continue
-
-            return None
-
-        def find_hermes_binary():
-            home = pathlib.Path.home()
-            path_entries = [
-                str(home / ".local" / "bin"),
-                str(home / ".hermes" / "hermes-agent" / "venv" / "bin"),
-                str(home / ".cargo" / "bin"),
-                "/opt/homebrew/bin",
-                "/usr/local/bin",
-                os.environ.get("PATH", ""),
-            ]
-            search_path = os.pathsep.join([entry for entry in path_entries if entry])
-            candidate = shutil.which("hermes", path=search_path)
-            if candidate:
-                return candidate
 
             return None
 
@@ -119,6 +103,7 @@ final class RemoteHermesService: @unchecked Sendable {
             home = pathlib.Path.home()
             default_hermes_home = home / ".hermes"
             hermes_home = resolved_hermes_home()
+            custom_home_mode = bool(payload.get("custom_home_mode"))
             user_path = hermes_home / "memories" / "USER.md"
             memory_path = hermes_home / "memories" / "MEMORY.md"
             soul_path = hermes_home / "SOUL.md"
@@ -127,41 +112,46 @@ final class RemoteHermesService: @unchecked Sendable {
             kanban_database_path = default_hermes_home / "kanban.db"
             profiles_dir = default_hermes_home / "profiles"
 
-            available_profiles = [{
-                "name": "default",
-                "path": tilde(default_hermes_home, home),
-                "is_default": True,
-                "exists": default_hermes_home.exists(),
-            }]
-
-            if profiles_dir.exists():
-                for item in sorted(
-                    [entry for entry in profiles_dir.iterdir() if entry.is_dir()],
-                    key=lambda entry: entry.name.lower(),
-                ):
-                    available_profiles.append({
-                        "name": item.name,
-                        "path": tilde(item, home),
-                        "is_default": False,
-                        "exists": True,
-                    })
-
             active_profile_name = payload.get("profile_name")
             if hermes_home == default_hermes_home:
                 active_profile_name = "default"
             elif not active_profile_name:
                 active_profile_name = hermes_home.name
 
+            active_profile = {
+                "name": active_profile_name,
+                "path": tilde(hermes_home, home),
+                "is_default": hermes_home == default_hermes_home,
+                "exists": hermes_home.exists(),
+            }
+
+            if custom_home_mode:
+                available_profiles = [active_profile]
+            else:
+                available_profiles = [{
+                    "name": "default",
+                    "path": tilde(default_hermes_home, home),
+                    "is_default": True,
+                    "exists": default_hermes_home.exists(),
+                }]
+
+                if profiles_dir.exists():
+                    for item in sorted(
+                        [entry for entry in profiles_dir.iterdir() if entry.is_dir()],
+                        key=lambda entry: entry.name.lower(),
+                    ):
+                        available_profiles.append({
+                            "name": item.name,
+                            "path": tilde(item, home),
+                            "is_default": False,
+                            "exists": True,
+                        })
+
             result = {
                 "ok": True,
                 "remote_home": tilde(home, home),
                 "hermes_home": tilde(hermes_home, home),
-                "active_profile": {
-                    "name": active_profile_name,
-                    "path": tilde(hermes_home, home),
-                    "is_default": hermes_home == default_hermes_home,
-                    "exists": hermes_home.exists(),
-                },
+                "active_profile": active_profile,
                 "available_profiles": available_profiles,
                 "paths": {
                     "user": tilde(user_path, home),
@@ -192,10 +182,12 @@ final class RemoteHermesService: @unchecked Sendable {
 
 private struct RemoteDiscoveryRequest: Encodable {
     let hermesHome: String
-    let profileName: String
+    let profileName: String?
+    let customHomeMode: Bool
 
     enum CodingKeys: String, CodingKey {
         case hermesHome = "hermes_home"
         case profileName = "profile_name"
+        case customHomeMode = "custom_home_mode"
     }
 }

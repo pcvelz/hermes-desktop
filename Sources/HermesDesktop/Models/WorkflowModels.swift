@@ -207,29 +207,23 @@ struct WorkflowLaunchInvocation: Equatable, Sendable {
     let prompt: String
     let hermesProfileName: String?
     let skillRelativePaths: [String]
+    let startupCommandLine: String
 
     init(workflow: WorkflowPreset, connection: ConnectionProfile) {
         self.prompt = workflow.prompt
-        self.hermesProfileName = connection.trimmedHermesProfile
+        self.hermesProfileName = connection.cliHermesProfileName
         self.skillRelativePaths = workflow.assignedSkills.map(\.relativePath)
+        self.startupCommandLine = connection.remoteHermesCommandLine(arguments: Self.buildArguments(
+            hermesProfileName: connection.cliHermesProfileName,
+            skillRelativePaths: workflow.assignedSkills.map(\.relativePath)
+        ))
     }
 
     var arguments: [String] {
-        var values = [String]()
-
-        if let hermesProfileName {
-            values.append(contentsOf: ["--profile", hermesProfileName])
-        }
-
-        for skillRelativePath in skillRelativePaths {
-            values.append(contentsOf: ["--skills", skillRelativePath])
-        }
-
-        values.append(contentsOf: [
-            "chat"
-        ])
-
-        return values
+        Self.buildArguments(
+            hermesProfileName: hermesProfileName,
+            skillRelativePaths: skillRelativePaths
+        )
     }
 
     var initialInput: String {
@@ -240,5 +234,23 @@ struct WorkflowLaunchInvocation: Equatable, Sendable {
         (["hermes"] + arguments)
             .map(\.shellQuotedForTerminalCommand)
             .joined(separator: " ")
+    }
+
+    private static func buildArguments(
+        hermesProfileName: String?,
+        skillRelativePaths: [String]
+    ) -> [String] {
+        var values = [String]()
+
+        if let hermesProfileName {
+            values.append(contentsOf: ["--profile", hermesProfileName])
+        }
+
+        for skillRelativePath in skillRelativePaths {
+            values.append(contentsOf: ["--skills", skillRelativePath])
+        }
+
+        values.append("chat")
+        return values
     }
 }

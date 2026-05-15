@@ -4,6 +4,20 @@ import Testing
 
 struct RemotePythonScriptTests {
     @Test
+    func sharedHelpersResolveHermesBinaryFromActiveWorkspaceFirst() throws {
+        let sourceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/HermesDesktop/Utilities/RemotePythonScript.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        #expect(source.contains("def hermes_search_path(request=None):"))
+        #expect(source.contains(#"hermes_home / "hermes-agent" / "venv" / "bin""#))
+        #expect(source.contains("def find_hermes_binary(request=None):"))
+    }
+
+    @Test
     func kanbanHelperKeepsUpstreamBoardDatabasePaths() throws {
         let sourceURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -17,8 +31,10 @@ struct RemotePythonScriptTests {
         #expect(!source.contains(#"return kanban_home_path() / "kanban" / "kanban.db""#))
         #expect(source.contains("def add_hermes_agent_import_paths():"))
         #expect(source.contains(#"home / ".hermes" / "hermes-agent""#))
+        #expect(source.contains(#"resolved_hermes_home() / "hermes-agent""#))
         #expect(source.contains(#"venv_lib.glob("python*/site-packages")"#))
         #expect(source.contains("def load_hermes_env_file():"))
+        #expect(source.contains(#"active_hermes_home = resolved_hermes_home()"#))
         #expect(source.contains(#"kanban_home_path() / ".env""#))
         #expect(source.contains("load_hermes_env_file()"))
     }

@@ -128,4 +128,33 @@ struct WorkflowModelsTests {
         #expect(invocation.initialInput.count == expected.count)
         #expect(invocation.initialInput.hasSuffix("section-1999 keeps flowing"))
     }
+
+    @Test
+    func launchInvocationSkipsProfileArgumentForCustomHermesHome() {
+        let workflow = WorkflowPreset(
+            workspaceScopeFingerprint: "host|user|22|~/.hermes-work",
+            name: "Investigate",
+            prompt: "Inspect this setup",
+            assignedSkills: [
+                WorkflowSkillReference(relativePath: "ssh/tools", slug: "tools", name: "SSH Tools")
+            ]
+        )
+        let connection = ConnectionProfile(
+            label: "Research",
+            sshAlias: "hermes-home",
+            hermesProfile: "research",
+            customHermesHomePath: "~/.hermes-work"
+        ).updated()
+
+        let invocation = WorkflowLaunchInvocation(workflow: workflow, connection: connection)
+
+        #expect(invocation.arguments == [
+            "--skills",
+            "ssh/tools",
+            "chat"
+        ])
+        #expect(invocation.commandLine == "hermes --skills ssh/tools chat")
+        #expect(invocation.startupCommandLine.contains(#"$HERMES_HOME/hermes-agent/venv/bin/hermes"#))
+        #expect(invocation.startupCommandLine.contains(#""$HERMES_BIN" --skills ssh/tools chat"#))
+    }
 }

@@ -97,4 +97,23 @@ struct HermesChatInvocationTests {
         ])
         #expect(invocation.commandLine == "hermes --profile researcher --resume 'debug session'\\''s final turn'")
     }
+
+    @Test
+    func terminalResumeInvocationSkipsProfileArgumentForCustomHermesHome() {
+        let connection = ConnectionProfile(
+            label: "Host",
+            sshHost: "example.local",
+            hermesProfile: "researcher",
+            customHermesHomePath: "~/.hermes-work"
+        )
+        let invocation = HermesSessionResumeInvocation(
+            sessionID: "session-123",
+            connection: connection
+        )
+
+        #expect(invocation.arguments == ["--resume", "session-123"])
+        #expect(invocation.commandLine == "hermes --resume session-123")
+        #expect(invocation.startupCommandLine.contains(#"$HERMES_HOME/hermes-agent/venv/bin/hermes"#))
+        #expect(invocation.startupCommandLine.contains(#""$HERMES_BIN" --resume session-123"#))
+    }
 }

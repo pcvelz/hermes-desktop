@@ -18,6 +18,8 @@
 "Connection Details" = "连接详情";
 "Connection OK" = "连接正常";
 "Connections" = "连接";
+"Custom Hermes home" = "自定义 Hermes 主目录";
+"Custom Hermes home (advanced)" = "自定义 Hermes 主目录（高级）";
 "Create Cron Job" = "创建定时任务";
 "Create New Skill" = "创建新技能";
 "Create a tab to start a real SSH shell for the active host." = "创建一个标签页，为当前主机启动真实的 SSH shell。";
@@ -606,6 +608,7 @@
 "The Mac and Hermes host do not need to share the same Wi-Fi. What matters is that normal ssh from this Mac can reach the host over LAN, public IP, VPN, or Tailscale." = "Mac 和 Hermes 主机不必在同一个 Wi‑Fi。关键是这台 Mac 能通过普通 ssh 经 LAN、公网 IP、VPN 或 Tailscale 到达主机。";
 "The SSH alias currently takes priority over Host. The Host value is preserved in the profile, but it will be ignored while the alias is present." = "SSH 别名当前优先于 Host。Host 值会保留在配置中，但只要别名存在就会被忽略。";
 "Leave it empty for the default Hermes home at `~/.hermes`. Set a profile name like `researcher` to target `~/.hermes/profiles/researcher` on the same host." = "留空将使用默认 Hermes 主目录 `~/.hermes`。设置如 `researcher` 的配置名称，可在同一主机上指向 `~/.hermes/profiles/researcher`。";
+"Leave this empty for the normal setup. When set, Hermes Desktop uses this path as `HERMES_HOME` for Sessions, Files, Skills, Usage, Cron, chat, and Terminal." = "正常安装请保持为空。设置后，Hermes Desktop 会将此路径作为 `HERMES_HOME`，用于 Sessions、Files、Skills、Usage、Cron、聊天和 Terminal。";
 "No skills found" = "未找到技能";
 "No matching skills" = "没有匹配的技能";
 "Day" = "星期";
@@ -643,6 +646,9 @@
 "hermes-home" = "hermes-home";
 "mac-studio.local, 203.0.113.10, localhost" = "mac-studio.local、203.0.113.10、localhost";
 "default or researcher" = "default 或 researcher";
+"Only use this if Hermes lives outside the standard `~/.hermes` or `~/.hermes/profiles/<name>` layout on the remote host." = "仅当远端主机上的 Hermes 不在标准 `~/.hermes` 或 `~/.hermes/profiles/<name>` 布局下时才使用此项。";
+"Remote Hermes home path" = "远端 Hermes 主目录路径";
+"~/.hermes-work or /opt/data" = "~/.hermes-work 或 /opt/data";
 "Remote debugging, Deploy to VPS, Research notes" = "远程调试、部署到 VPS、研究笔记";
 "When Hermes should use this skill and what it helps it do." = "Hermes 何时应使用此技能，以及它能帮助完成什么。";
 "Optional: agent-workflows, ssh/tools" = "可选：agent-workflows、ssh/tools";

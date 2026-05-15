@@ -22,6 +22,7 @@ enum RemotePythonScript {
 
     private static let sharedHelpers = """
     import os
+    import shutil
     import sqlite3
 
     def fail(message):
@@ -121,6 +122,41 @@ enum RemotePythonScript {
         if env_home is not None:
             return env_home
         return home / ".hermes"
+
+    def hermes_search_path(request=None):
+        home = pathlib.Path.home()
+        hermes_home = resolved_hermes_home(request)
+        candidates = [
+            hermes_home / "hermes-agent" / "venv" / "bin",
+            home / ".local" / "bin",
+            home / ".hermes" / "hermes-agent" / "venv" / "bin",
+            home / ".cargo" / "bin",
+            pathlib.Path("/opt/homebrew/bin"),
+            pathlib.Path("/usr/local/bin"),
+        ]
+
+        entries = []
+        seen = set()
+        for candidate in candidates:
+            try:
+                entry = str(candidate)
+            except Exception:
+                continue
+            if not entry or entry in seen:
+                continue
+            seen.add(entry)
+            entries.append(entry)
+
+        env_path = os.environ.get("PATH", "")
+        if env_path:
+            entries.append(env_path)
+        return os.pathsep.join(entries)
+
+    def find_hermes_binary(request=None):
+        candidate = shutil.which("hermes", path=hermes_search_path(request))
+        if candidate:
+            return candidate
+        return None
 
     def tilde(path, home=None):
         if home is None:

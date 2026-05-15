@@ -32,25 +32,40 @@ struct HermesChatInvocation: Equatable, Sendable {
 struct HermesSessionResumeInvocation: Equatable, Sendable {
     let sessionID: String
     let hermesProfileName: String?
+    let startupCommandLine: String
 
     init(sessionID: String, connection: ConnectionProfile) {
         self.sessionID = sessionID
-        self.hermesProfileName = connection.trimmedHermesProfile
+        self.hermesProfileName = connection.cliHermesProfileName
+        self.startupCommandLine = connection.remoteHermesCommandLine(arguments: Self.buildArguments(
+            hermesProfileName: connection.cliHermesProfileName,
+            sessionID: sessionID
+        ))
     }
 
     var arguments: [String] {
-        var values = [String]()
-        if let hermesProfileName {
-            values.append(contentsOf: ["--profile", hermesProfileName])
-        }
-        values.append(contentsOf: ["--resume", sessionID])
-        return values
+        Self.buildArguments(
+            hermesProfileName: hermesProfileName,
+            sessionID: sessionID
+        )
     }
 
     var commandLine: String {
         (["hermes"] + arguments)
             .map(\.shellQuotedForTerminalCommand)
             .joined(separator: " ")
+    }
+
+    private static func buildArguments(
+        hermesProfileName: String?,
+        sessionID: String
+    ) -> [String] {
+        var values = [String]()
+        if let hermesProfileName {
+            values.append(contentsOf: ["--profile", hermesProfileName])
+        }
+        values.append(contentsOf: ["--resume", sessionID])
+        return values
     }
 }
 

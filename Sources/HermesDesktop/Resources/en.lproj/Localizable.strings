@@ -18,6 +18,8 @@
 "Connection Details" = "Connection Details";
 "Connection OK" = "Connection OK";
 "Connections" = "Connections";
+"Custom Hermes home" = "Custom Hermes home";
+"Custom Hermes home (advanced)" = "Custom Hermes home (advanced)";
 "Create Cron Job" = "Create Cron Job";
 "Create New Skill" = "Create New Skill";
 "Create a tab to start a real SSH shell for the active host." = "Create a tab to start a real SSH shell for the active host.";
@@ -606,6 +608,7 @@
 "The Mac and Hermes host do not need to share the same Wi-Fi. What matters is that normal ssh from this Mac can reach the host over LAN, public IP, VPN, or Tailscale." = "The Mac and Hermes host do not need to share the same Wi-Fi. What matters is that normal ssh from this Mac can reach the host over LAN, public IP, VPN, or Tailscale.";
 "The SSH alias currently takes priority over Host. The Host value is preserved in the profile, but it will be ignored while the alias is present." = "The SSH alias currently takes priority over Host. The Host value is preserved in the profile, but it will be ignored while the alias is present.";
 "Leave it empty for the default Hermes home at `~/.hermes`. Set a profile name like `researcher` to target `~/.hermes/profiles/researcher` on the same host." = "Leave it empty for the default Hermes home at `~/.hermes`. Set a profile name like `researcher` to target `~/.hermes/profiles/researcher` on the same host.";
+"Leave this empty for the normal setup. When set, Hermes Desktop uses this path as `HERMES_HOME` for Sessions, Files, Skills, Usage, Cron, chat, and Terminal." = "Leave this empty for the normal setup. When set, Hermes Desktop uses this path as `HERMES_HOME` for Sessions, Files, Skills, Usage, Cron, chat, and Terminal.";
 "No skills found" = "No skills found";
 "No matching skills" = "No matching skills";
 "Day" = "Day";
@@ -643,6 +646,9 @@
 "hermes-home" = "hermes-home";
 "mac-studio.local, 203.0.113.10, localhost" = "mac-studio.local, 203.0.113.10, localhost";
 "default or researcher" = "default or researcher";
+"Only use this if Hermes lives outside the standard `~/.hermes` or `~/.hermes/profiles/<name>` layout on the remote host." = "Only use this if Hermes lives outside the standard `~/.hermes` or `~/.hermes/profiles/<name>` layout on the remote host.";
+"Remote Hermes home path" = "Remote Hermes home path";
+"~/.hermes-work or /opt/data" = "~/.hermes-work or /opt/data";
 "Remote debugging, Deploy to VPS, Research notes" = "Remote debugging, Deploy to VPS, Research notes";
 "When Hermes should use this skill and what it helps it do." = "When Hermes should use this skill and what it helps it do.";
 "Optional: agent-workflows, ssh/tools" = "Optional: agent-workflows, ssh/tools";

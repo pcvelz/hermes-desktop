@@ -1357,7 +1357,7 @@ final class AppState: ObservableObject {
         await workflowLaunchDiagnostics.recordWorkflowRunRequested(workflowLaunchDiagnosticsContext)
         terminalWorkspace.addCommandTab(
             for: profile.updated(),
-            commandLine: invocation.commandLine,
+            commandLine: invocation.startupCommandLine,
             initialInput: invocation.initialInput,
             workflowLaunchDiagnosticsContext: workflowLaunchDiagnosticsContext
         )
@@ -2217,7 +2217,7 @@ final class AppState: ObservableObject {
         let invocation = HermesSessionResumeInvocation(sessionID: session.id, connection: profile)
         terminalWorkspace.addCommandTab(
             for: profile.updated(),
-            commandLine: invocation.commandLine
+            commandLine: invocation.startupCommandLine
         )
         selectedSection = .terminal
         handleSectionEntry(.terminal)

@@ -18,6 +18,8 @@
 "Connection Details" = "Сведения о подключении";
 "Connection OK" = "Подключение работает";
 "Connections" = "Подключения";
+"Custom Hermes home" = "Пользовательская домашняя папка Hermes";
+"Custom Hermes home (advanced)" = "Пользовательская домашняя папка Hermes (дополнительно)";
 "Create Cron Job" = "Создать cron-задание";
 "Create New Skill" = "Создать новый навык";
 "Create a tab to start a real SSH shell for the active host." = "Создайте вкладку, чтобы запустить настоящий SSH shell для активного хоста.";
@@ -606,6 +608,7 @@
 "The Mac and Hermes host do not need to share the same Wi-Fi. What matters is that normal ssh from this Mac can reach the host over LAN, public IP, VPN, or Tailscale." = "Mac и хост Hermes не обязаны быть в одной Wi‑Fi-сети. Важно, чтобы обычный ssh с этого Mac достигал хоста через LAN, публичный IP, VPN или Tailscale.";
 "The SSH alias currently takes priority over Host. The Host value is preserved in the profile, but it will be ignored while the alias is present." = "SSH-алиас сейчас имеет приоритет над Host. Значение Host сохраняется в профиле, но будет игнорироваться, пока указан алиас.";
 "Leave it empty for the default Hermes home at `~/.hermes`. Set a profile name like `researcher` to target `~/.hermes/profiles/researcher` on the same host." = "Оставьте пустым для стандартной домашней папки Hermes `~/.hermes`. Укажите имя профиля, например `researcher`, чтобы использовать `~/.hermes/profiles/researcher` на том же хосте.";
+"Leave this empty for the normal setup. When set, Hermes Desktop uses this path as `HERMES_HOME` for Sessions, Files, Skills, Usage, Cron, chat, and Terminal." = "Оставьте это поле пустым для обычной установки. Если задать значение, Hermes Desktop будет использовать этот путь как `HERMES_HOME` для Sessions, Files, Skills, Usage, Cron, чата и Terminal.";
 "No skills found" = "Навыки не найдены";
 "No matching skills" = "Нет подходящих навыков";
 "Day" = "День";
@@ -643,6 +646,9 @@
 "hermes-home" = "hermes-home";
 "mac-studio.local, 203.0.113.10, localhost" = "mac-studio.local, 203.0.113.10, localhost";
 "default or researcher" = "default или researcher";
+"Only use this if Hermes lives outside the standard `~/.hermes` or `~/.hermes/profiles/<name>` layout on the remote host." = "Используйте это только если Hermes на удаленном хосте находится вне стандартной схемы `~/.hermes` или `~/.hermes/profiles/<name>`.";
+"Remote Hermes home path" = "Путь к домашней папке Hermes на удаленном хосте";
+"~/.hermes-work or /opt/data" = "~/.hermes-work или /opt/data";
 "Remote debugging, Deploy to VPS, Research notes" = "Удаленная отладка, деплой на VPS, исследовательские заметки";
 "When Hermes should use this skill and what it helps it do." = "Когда Hermes должен использовать этот навык и чем он помогает.";
 "Optional: agent-workflows, ssh/tools" = "Необязательно: agent-workflows, ssh/tools";

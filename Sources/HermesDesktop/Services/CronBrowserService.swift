@@ -11,7 +11,7 @@ final class CronBrowserService: @unchecked Sendable {
         let script = try RemotePythonScript.wrap(
             EmptyCronRequest(
                 hermesHome: connection.remoteHermesHomePath,
-                profileName: connection.resolvedHermesProfileName
+                profileName: connection.cliHermesProfileName
             ),
             body: listJobsBody
         )
@@ -24,7 +24,7 @@ final class CronBrowserService: @unchecked Sendable {
 
         try sshTransport.validateSuccessfulExit(result, for: connection)
 
-        guard let data = result.stdout.data(using: .utf8) else {
+        guard let data = result.stdout.data(using: String.Encoding.utf8) else {
             throw SSHTransportError.invalidResponse("Remote cron output was not valid UTF-8.")
         }
 
@@ -47,7 +47,7 @@ final class CronBrowserService: @unchecked Sendable {
             request: CronMutationRequest(
                 action: .create,
                 hermesHome: connection.remoteHermesHomePath,
-                profileName: connection.resolvedHermesProfileName,
+                profileName: connection.cliHermesProfileName,
                 draft: CronMutationDraft(draft: draft)
             )
         )
@@ -66,7 +66,7 @@ final class CronBrowserService: @unchecked Sendable {
                 action: .update,
                 jobID: jobID,
                 hermesHome: connection.remoteHermesHomePath,
-                profileName: connection.resolvedHermesProfileName,
+                profileName: connection.cliHermesProfileName,
                 draft: CronMutationDraft(draft: draft)
             )
         )
@@ -94,7 +94,7 @@ final class CronBrowserService: @unchecked Sendable {
                 jobID: jobID,
                 command: command.rawValue,
                 hermesHome: connection.remoteHermesHomePath,
-                profileName: connection.resolvedHermesProfileName
+                profileName: connection.cliHermesProfileName
             ),
             body: commandBody
         )
@@ -403,25 +403,6 @@ final class CronBrowserService: @unchecked Sendable {
         import pathlib
         import shutil
         import subprocess
-
-        def find_hermes_binary():
-            candidate = shutil.which("hermes", path=hermes_search_path())
-            if candidate:
-                return candidate
-
-            return None
-
-        def hermes_search_path():
-            home = pathlib.Path.home()
-            path_entries = [
-                str(home / ".local" / "bin"),
-                str(home / ".hermes" / "hermes-agent" / "venv" / "bin"),
-                str(home / ".cargo" / "bin"),
-                "/opt/homebrew/bin",
-                "/usr/local/bin",
-                os.environ.get("PATH", ""),
-            ]
-            return os.pathsep.join([entry for entry in path_entries if entry])
 
         job_id = str(payload.get("job_id") or "").strip()
         command = str(payload.get("command") or "").strip()
@@ -773,7 +754,7 @@ final class CronBrowserService: @unchecked Sendable {
 
 private struct EmptyCronRequest: Encodable {
     let hermesHome: String
-    let profileName: String
+    let profileName: String?
 
     enum CodingKeys: String, CodingKey {
         case hermesHome = "hermes_home"
@@ -785,7 +766,7 @@ private struct CronCommandRequest: Encodable {
     let jobID: String
     let command: String
     let hermesHome: String
-    let profileName: String
+    let profileName: String?
 
     enum CodingKeys: String, CodingKey {
         case jobID = "job_id"
@@ -804,7 +785,7 @@ private struct CronMutationRequest: Encodable {
     let action: CronMutationAction
     var jobID: String?
     let hermesHome: String
-    let profileName: String
+    let profileName: String?
     let draft: CronMutationDraft
 
     enum CodingKeys: String, CodingKey {

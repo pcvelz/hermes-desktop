@@ -236,17 +236,9 @@ final class HermesChatService: @unchecked Sendable {
             env.setdefault("NO_COLOR", "1")
             env.setdefault("TERM", "dumb")
 
-            path_entries = [
-                str(home / ".local" / "bin"),
-                str(home / ".hermes" / "hermes-agent" / "venv" / "bin"),
-                str(home / ".cargo" / "bin"),
-                "/opt/homebrew/bin",
-                "/usr/local/bin",
-                env.get("PATH", ""),
-            ]
-            env["PATH"] = os.pathsep.join([entry for entry in path_entries if entry])
+            env["PATH"] = hermes_search_path()
 
-            hermes_path = shutil.which("hermes", path=env["PATH"])
+            hermes_path = find_hermes_binary()
             if hermes_path is None:
                 fail("Hermes CLI was not found in the remote SSH environment. Verify that `hermes` is installed and available on PATH for non-interactive SSH commands.")
 

@@ -24,8 +24,9 @@ struct ConnectionProfileTests {
         #expect(profile.remotePath(for: .memory) == "~/.hermes/memories/MEMORY.md")
         #expect(
             profile.remoteShellBootstrapCommand ==
-                #"exec /bin/sh -c "export HERMES_HOME=\"\$HOME/.hermes\"; exec \"\${SHELL:-/bin/zsh}\" -l""#
+                #"exec /bin/sh -c "export HERMES_HOME=\"\$HOME/.hermes\"; export PATH=\"\$HOME/.hermes/hermes-agent/venv/bin:\$HOME/.local/bin:\$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:\$PATH\"; exec \"\${SHELL:-/bin/zsh}\" -l""#
         )
+        #expect(profile.cliHermesProfileName == nil)
         #expect(profile.displayDestination == "alice@hermes-home")
         #expect(profile.resolvedPort == nil)
         #expect(profile.usesAliasSourceOfTruth)
@@ -46,11 +47,12 @@ struct ConnectionProfileTests {
 
         #expect(profileScoped.resolvedHermesProfileName == "researcher")
         #expect(profileScoped.remoteHermesHomePath == "~/.hermes/profiles/researcher")
+        #expect(profileScoped.cliHermesProfileName == "researcher")
         #expect(profileScoped.remoteKanbanHomePath == "~/.hermes")
         #expect(profileScoped.remoteKanbanDatabasePath == "~/.hermes/kanban.db")
         #expect(
             profileScoped.remoteShellBootstrapCommand ==
-                #"exec /bin/sh -c "export HERMES_HOME=\"\$HOME/.hermes/profiles/researcher\"; exec \"\${SHELL:-/bin/zsh}\" -l""#
+                #"exec /bin/sh -c "export HERMES_HOME=\"\$HOME/.hermes/profiles/researcher\"; export PATH=\"\$HOME/.hermes/profiles/researcher/hermes-agent/venv/bin:\$HOME/.local/bin:\$HOME/.hermes/hermes-agent/venv/bin:\$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:\$PATH\"; exec \"\${SHELL:-/bin/zsh}\" -l""#
         )
         #expect(base.workspaceScopeFingerprint != profileScoped.workspaceScopeFingerprint)
         #expect(base.hostConnectionFingerprint == profileScoped.hostConnectionFingerprint)
@@ -68,7 +70,7 @@ struct ConnectionProfileTests {
 
         #expect(
             profile.remoteShellBootstrapCommand ==
-                #"exec /bin/sh -c "export HERMES_HOME=\"\$HOME/.hermes/profiles/research\\\"lab\"; exec \"\${SHELL:-/bin/zsh}\" -l""#
+                #"exec /bin/sh -c "export HERMES_HOME=\"\$HOME/.hermes/profiles/research\\\"lab\"; export PATH=\"\$HOME/.hermes/profiles/research\\\"lab/hermes-agent/venv/bin:\$HOME/.local/bin:\$HOME/.hermes/hermes-agent/venv/bin:\$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:\$PATH\"; exec \"\${SHELL:-/bin/zsh}\" -l""#
         )
     }
 
@@ -83,7 +85,7 @@ struct ConnectionProfileTests {
 
         #expect(
             profile.remoteShellBootstrapCommand ==
-                #"exec /bin/sh -c "export HERMES_HOME=\"\$HOME/.hermes/profiles/research\\\$HOME\\\`whoami\\\`\"; exec \"\${SHELL:-/bin/zsh}\" -l""#
+                #"exec /bin/sh -c "export HERMES_HOME=\"\$HOME/.hermes/profiles/research\\\$HOME\\\`whoami\\\`\"; export PATH=\"\$HOME/.hermes/profiles/research\\\$HOME\\\`whoami\\\`/hermes-agent/venv/bin:\$HOME/.local/bin:\$HOME/.hermes/hermes-agent/venv/bin:\$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:\$PATH\"; exec \"\${SHELL:-/bin/zsh}\" -l""#
         )
     }
 
@@ -127,6 +129,71 @@ struct ConnectionProfileTests {
     }
 
     @Test
+    func customHermesHomePathOverridesStandardWorkspaceWithoutChangingHostIdentity() {
+        let profile = ConnectionProfile(
+            label: "Container Host",
+            sshHost: "example.com",
+            sshUser: "alice",
+            customHermesHomePath: "  ~/.hermes-work/  "
+        ).updated()
+
+        #expect(profile.trimmedHermesProfile == nil)
+        #expect(profile.trimmedCustomHermesHomePath == "~/.hermes-work")
+        #expect(profile.usesCustomHermesHome)
+        #expect(profile.usesDefaultHermesProfile == false)
+        #expect(profile.cliHermesProfileName == nil)
+        #expect(profile.resolvedHermesProfileName == ".hermes-work")
+        #expect(profile.remoteHermesHomePath == "~/.hermes-work")
+        #expect(profile.remoteShellBootstrapCommand == #"exec /bin/sh -c "export HERMES_HOME=\"\$HOME/.hermes-work\"; export PATH=\"\$HOME/.hermes-work/hermes-agent/venv/bin:\$HOME/.local/bin:\$HOME/.hermes/hermes-agent/venv/bin:\$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:\$PATH\"; exec \"\${SHELL:-/bin/zsh}\" -l""#)
+    }
+
+    @Test
+    func customHermesHomePathSupportsAbsoluteRemotePaths() {
+        let profile = ConnectionProfile(
+            label: "Container Host",
+            sshHost: "example.com",
+            customHermesHomePath: "/opt/data/hermes agent"
+        ).updated()
+
+        #expect(profile.remoteHermesHomePath == "/opt/data/hermes agent")
+        #expect(
+            profile.remoteShellBootstrapCommand ==
+                #"exec /bin/sh -c "export HERMES_HOME=\"/opt/data/hermes agent\"; export PATH=\"/opt/data/hermes agent/hermes-agent/venv/bin:\$HOME/.local/bin:\$HOME/.hermes/hermes-agent/venv/bin:\$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:\$PATH\"; exec \"\${SHELL:-/bin/zsh}\" -l""#
+        )
+        #expect(profile.resolvedHermesProfileName == "hermes agent")
+    }
+
+    @Test
+    func rejectsSimultaneousProfileAndCustomHermesHomePath() {
+        let profile = ConnectionProfile(
+            label: "Unsafe",
+            sshHost: "example.com",
+            hermesProfile: "research",
+            customHermesHomePath: "~/.hermes-work"
+        ).updated()
+
+        #expect(profile.validationError == "Choose either a Hermes profile or a custom Hermes home path.")
+    }
+
+    @Test
+    func rejectsUnsupportedCustomHermesHomePathFormats() {
+        let relativeProfile = ConnectionProfile(
+            label: "Unsafe",
+            sshHost: "example.com",
+            customHermesHomePath: "profiles/work"
+        ).updated()
+
+        let envProfile = ConnectionProfile(
+            label: "Unsafe",
+            sshHost: "example.com",
+            customHermesHomePath: "$HOME/.hermes-work"
+        ).updated()
+
+        #expect(relativeProfile.validationError == "Custom Hermes home must start with `~/` or `/`.")
+        #expect(envProfile.validationError == "Custom Hermes home must start with `~/` or `/`.")
+    }
+
+    @Test
     func startupCommandRunsThroughLoginShellWithoutInputInjection() {
         let profile = ConnectionProfile(
             label: "Research Host",
@@ -136,7 +203,7 @@ struct ConnectionProfileTests {
 
         #expect(
             profile.remoteShellBootstrapCommand(startupCommandLine: "hermes --profile researcher --resume 'debug session'\\''s final turn'") ==
-                #"exec /bin/sh -c "export HERMES_HOME=\"\$HOME/.hermes/profiles/researcher\"; exec \"\${SHELL:-/bin/zsh}\" -lc \"hermes --profile researcher --resume 'debug session'\\\\''s final turn'; status=\\\$?; if [ \\\"\\\$status\\\" -ne 0 ]; then printf '\\\\n[Hermes Desktop] Startup command exited with status %s.\\\\n' \\\"\\\$status\\\"; fi; exec \\\"\\\${SHELL:-/bin/zsh}\\\" -l\"""#
+                #"exec /bin/sh -c "export HERMES_HOME=\"\$HOME/.hermes/profiles/researcher\"; export PATH=\"\$HOME/.hermes/profiles/researcher/hermes-agent/venv/bin:\$HOME/.local/bin:\$HOME/.hermes/hermes-agent/venv/bin:\$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:\$PATH\"; exec \"\${SHELL:-/bin/zsh}\" -lc \"hermes --profile researcher --resume 'debug session'\\\\''s final turn'; hermes_bootstrap_exit_code=\\\$?; if [ \\\"\\\$hermes_bootstrap_exit_code\\\" -ne 0 ]; then printf '\\\\n[Hermes Desktop] Startup command exited with status %s.\\\\n' \\\"\\\$hermes_bootstrap_exit_code\\\"; fi; exec \\\"\\\${SHELL:-/bin/zsh}\\\" -l\"""#
         )
     }
 
@@ -149,7 +216,7 @@ struct ConnectionProfileTests {
 
         #expect(
             profile.remoteShellBootstrapCommand(startupCommandLine: "printf \"$HOME `whoami`\"") ==
-                #"exec /bin/sh -c "export HERMES_HOME=\"\$HOME/.hermes\"; exec \"\${SHELL:-/bin/zsh}\" -lc \"printf \\\"\\\$HOME \\\`whoami\\\`\\\"; status=\\\$?; if [ \\\"\\\$status\\\" -ne 0 ]; then printf '\\\\n[Hermes Desktop] Startup command exited with status %s.\\\\n' \\\"\\\$status\\\"; fi; exec \\\"\\\${SHELL:-/bin/zsh}\\\" -l\"""#
+                #"exec /bin/sh -c "export HERMES_HOME=\"\$HOME/.hermes\"; export PATH=\"\$HOME/.hermes/hermes-agent/venv/bin:\$HOME/.local/bin:\$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:\$PATH\"; exec \"\${SHELL:-/bin/zsh}\" -lc \"printf \\\"\\\$HOME \\\`whoami\\\`\\\"; hermes_bootstrap_exit_code=\\\$?; if [ \\\"\\\$hermes_bootstrap_exit_code\\\" -ne 0 ]; then printf '\\\\n[Hermes Desktop] Startup command exited with status %s.\\\\n' \\\"\\\$hermes_bootstrap_exit_code\\\"; fi; exec \\\"\\\${SHELL:-/bin/zsh}\\\" -l\"""#
         )
     }
 
@@ -187,6 +254,60 @@ struct ConnectionProfileTests {
     }
 
     @Test
+    func wrappedBootstrapExpandsCustomHermesHomePathTildeOnRemoteShell() throws {
+        let profile = ConnectionProfile(
+            label: "Container Host",
+            sshHost: "example.com",
+            customHermesHomePath: "~/.hermes-work"
+        ).updated()
+
+        let result = try runBootstrapLocally(
+            profile.remoteShellBootstrapCommand(startupCommandLine: #"printf "%s\n" "$HERMES_HOME""#)
+        )
+
+        #expect(result.exitCode == 0)
+        #expect(result.stdout == "/tmp/hermes-home/.hermes-work\n")
+        #expect(result.stderr == "")
+    }
+
+    @Test
+    func wrappedBootstrapPrependsActiveHermesCLIPaths() throws {
+        let profile = ConnectionProfile(
+            label: "Container Host",
+            sshHost: "example.com",
+            customHermesHomePath: "~/.hermes-work"
+        ).updated()
+
+        let result = try runBootstrapLocally(
+            profile.remoteShellBootstrapCommand(startupCommandLine: #"printf "%s\n" "$PATH""#)
+        )
+
+        #expect(result.exitCode == 0)
+        #expect(result.stdout.contains("/tmp/hermes-home/.hermes-work/hermes-agent/venv/bin"))
+        #expect(result.stdout.contains("/tmp/hermes-home/.local/bin"))
+        #expect(result.stdout.contains("/tmp/hermes-home/.hermes/hermes-agent/venv/bin"))
+        #expect(result.stderr == "")
+    }
+
+    @Test
+    func wrappedBootstrapRunsCleanlyUnderZshShell() throws {
+        let profile = ConnectionProfile(
+            label: "Research Host",
+            sshHost: "example.com",
+            hermesProfile: "researcher"
+        ).updated()
+
+        let result = try runBootstrapLocally(
+            profile.remoteShellBootstrapCommand(startupCommandLine: #"printf "%s\n" "$HERMES_HOME""#),
+            shellPath: "/bin/zsh"
+        )
+
+        #expect(result.exitCode == 0)
+        #expect(result.stdout == "/tmp/hermes-home/.hermes/profiles/researcher\n")
+        #expect(result.stderr == "")
+    }
+
+    @Test
     func controlPathRecreatesTemporarySocketDirectoryWhenPruned() throws {
         let fileManager = FileManager.default
         let paths = AppPaths(fileManager: fileManager)
@@ -213,7 +334,10 @@ private struct LocalBootstrapResult {
     let exitCode: Int32
 }
 
-private func runBootstrapLocally(_ command: String) throws -> LocalBootstrapResult {
+private func runBootstrapLocally(
+    _ command: String,
+    shellPath: String = "/bin/sh"
+) throws -> LocalBootstrapResult {
     let process = Process()
     let stdoutPipe = Pipe()
     let stderrPipe = Pipe()
@@ -222,7 +346,7 @@ private func runBootstrapLocally(_ command: String) throws -> LocalBootstrapResu
     process.arguments = ["-c", command]
     process.environment = [
         "HOME": "/tmp/hermes-home",
-        "SHELL": "/bin/sh"
+        "SHELL": shellPath
     ]
     process.standardOutput = stdoutPipe
     process.standardError = stderrPipe

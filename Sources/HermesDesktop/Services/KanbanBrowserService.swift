@@ -11,6 +11,7 @@ final class KanbanBrowserService: @unchecked Sendable {
         let script = try RemotePythonScript.wrap(
             KanbanBoardsRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 includeArchived: includeArchived
             ),
             body: boardsBody
@@ -27,6 +28,7 @@ final class KanbanBrowserService: @unchecked Sendable {
         let script = try RemotePythonScript.wrap(
             KanbanBoardRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 boardSlug: boardSlug,
                 includeArchived: includeArchived
             ),
@@ -44,6 +46,7 @@ final class KanbanBrowserService: @unchecked Sendable {
         let script = try RemotePythonScript.wrap(
             KanbanTaskDetailRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 boardSlug: boardSlug,
                 taskID: taskID
             ),
@@ -61,6 +64,7 @@ final class KanbanBrowserService: @unchecked Sendable {
         let script = try RemotePythonScript.wrap(
             KanbanBoardCreateRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 slug: draft.normalizedSlug,
                 name: draft.normalizedName,
                 description: draft.normalizedDescription,
@@ -87,6 +91,7 @@ final class KanbanBrowserService: @unchecked Sendable {
         let script = try RemotePythonScript.wrap(
             KanbanBoardArchiveRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 boardSlug: slug
             ),
             body: archiveBoardBody
@@ -109,6 +114,7 @@ final class KanbanBrowserService: @unchecked Sendable {
         let script = try RemotePythonScript.wrap(
             KanbanHomeSubscriptionRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 boardSlug: boardSlug,
                 taskID: taskID,
                 platform: homeChannel.platform,
@@ -129,6 +135,7 @@ final class KanbanBrowserService: @unchecked Sendable {
             connection: connection,
             request: KanbanMutationRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 boardSlug: boardSlug,
                 author: connection.resolvedHermesProfileName,
                 action: "create",
@@ -160,6 +167,7 @@ final class KanbanBrowserService: @unchecked Sendable {
             connection: connection,
             request: KanbanMutationRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 boardSlug: boardSlug,
                 author: connection.resolvedHermesProfileName,
                 action: "comment",
@@ -191,6 +199,7 @@ final class KanbanBrowserService: @unchecked Sendable {
             connection: connection,
             request: KanbanMutationRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 boardSlug: boardSlug,
                 author: connection.resolvedHermesProfileName,
                 action: "update_fields",
@@ -214,6 +223,7 @@ final class KanbanBrowserService: @unchecked Sendable {
             connection: connection,
             request: KanbanMutationRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 boardSlug: boardSlug,
                 author: connection.resolvedHermesProfileName,
                 action: "set_parents",
@@ -238,6 +248,7 @@ final class KanbanBrowserService: @unchecked Sendable {
             connection: connection,
             request: KanbanMutationRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 boardSlug: boardSlug,
                 author: connection.resolvedHermesProfileName,
                 action: "set_children",
@@ -262,6 +273,7 @@ final class KanbanBrowserService: @unchecked Sendable {
             connection: connection,
             request: KanbanMutationRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 boardSlug: boardSlug,
                 author: connection.resolvedHermesProfileName,
                 action: "assign",
@@ -285,6 +297,7 @@ final class KanbanBrowserService: @unchecked Sendable {
             connection: connection,
             request: KanbanMutationRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 boardSlug: boardSlug,
                 author: connection.resolvedHermesProfileName,
                 action: "specify",
@@ -308,6 +321,7 @@ final class KanbanBrowserService: @unchecked Sendable {
             connection: connection,
             request: KanbanMutationRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 boardSlug: boardSlug,
                 author: connection.resolvedHermesProfileName,
                 action: "block",
@@ -331,6 +345,7 @@ final class KanbanBrowserService: @unchecked Sendable {
             connection: connection,
             request: KanbanMutationRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 boardSlug: boardSlug,
                 author: connection.resolvedHermesProfileName,
                 action: "unblock",
@@ -354,6 +369,7 @@ final class KanbanBrowserService: @unchecked Sendable {
             connection: connection,
             request: KanbanMutationRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 boardSlug: boardSlug,
                 author: connection.resolvedHermesProfileName,
                 action: "complete",
@@ -377,6 +393,7 @@ final class KanbanBrowserService: @unchecked Sendable {
             connection: connection,
             request: KanbanMutationRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 boardSlug: boardSlug,
                 author: connection.resolvedHermesProfileName,
                 action: "reclaim",
@@ -407,6 +424,7 @@ final class KanbanBrowserService: @unchecked Sendable {
             connection: connection,
             request: KanbanMutationRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 boardSlug: boardSlug,
                 author: connection.resolvedHermesProfileName,
                 action: "reassign",
@@ -438,6 +456,7 @@ final class KanbanBrowserService: @unchecked Sendable {
             connection: connection,
             request: KanbanMutationRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 boardSlug: boardSlug,
                 author: connection.resolvedHermesProfileName,
                 action: "edit_result",
@@ -463,6 +482,7 @@ final class KanbanBrowserService: @unchecked Sendable {
             connection: connection,
             request: KanbanMutationRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 boardSlug: boardSlug,
                 author: connection.resolvedHermesProfileName,
                 action: "archive",
@@ -486,6 +506,7 @@ final class KanbanBrowserService: @unchecked Sendable {
             connection: connection,
             request: KanbanMutationRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 boardSlug: boardSlug,
                 author: connection.resolvedHermesProfileName,
                 action: "delete",
@@ -509,6 +530,7 @@ final class KanbanBrowserService: @unchecked Sendable {
             connection: connection,
             request: KanbanMutationRequest(
                 kanbanHome: connection.remoteKanbanHomePath,
+                hermesHome: connection.remoteHermesHomePath,
                 boardSlug: boardSlug,
                 author: connection.resolvedHermesProfileName,
                 action: "dispatch",
@@ -1499,18 +1521,6 @@ final class KanbanBrowserService: @unchecked Sendable {
                 "supports_board_management": supports_board_management,
             }
 
-        def find_hermes_binary():
-            candidate = shutil.which("hermes")
-            if candidate:
-                return candidate
-            fallback = pathlib.Path.home() / ".local" / "bin" / "hermes"
-            if fallback.exists() and os.access(fallback, os.X_OK):
-                return str(fallback)
-            venv_fallback = pathlib.Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "hermes"
-            if venv_fallback.exists() and os.access(venv_fallback, os.X_OK):
-                return str(venv_fallback)
-            return None
-
         def run_hermes_cli(args, expect_json=False):
             hermes_binary = find_hermes_binary()
             if hermes_binary is None:
@@ -1520,15 +1530,7 @@ final class KanbanBrowserService: @unchecked Sendable {
             env["HERMES_HOME"] = str(kanban_home_path())
             env["HERMES_KANBAN_HOME"] = str(kanban_home_path())
             cli_profile = normalize_text(payload.get("author"))
-            path_entries = [
-                str(home / ".local" / "bin"),
-                str(home / ".hermes" / "hermes-agent" / "venv" / "bin"),
-                str(home / ".cargo" / "bin"),
-                "/opt/homebrew/bin",
-                "/usr/local/bin",
-                env.get("PATH", ""),
-            ]
-            env["PATH"] = os.pathsep.join([entry for entry in path_entries if entry])
+            env["PATH"] = hermes_search_path()
             command = [hermes_binary]
             if cli_profile and cli_profile != "default":
                 # Keep Kanban rooted at the shared Hermes home, but let the
@@ -1556,6 +1558,7 @@ final class KanbanBrowserService: @unchecked Sendable {
         def add_hermes_agent_import_paths():
             home = pathlib.Path.home()
             candidates = [
+                resolved_hermes_home() / "hermes-agent",
                 home / ".hermes" / "hermes-agent",
                 kanban_home_path() / "hermes-agent",
             ]
@@ -1574,8 +1577,9 @@ final class KanbanBrowserService: @unchecked Sendable {
 
         def load_hermes_env_file():
             home = pathlib.Path.home()
+            active_hermes_home = resolved_hermes_home()
             seen = set()
-            for path in [kanban_home_path() / ".env", home / ".hermes" / ".env"]:
+            for path in [active_hermes_home / ".env", kanban_home_path() / ".env", home / ".hermes" / ".env"]:
                 if path in seen:
                     continue
                 seen.add(path)
@@ -2357,21 +2361,25 @@ final class KanbanBrowserService: @unchecked Sendable {
 
 private struct KanbanBoardsRequest: Encodable {
     let kanbanHome: String
+    let hermesHome: String
     let includeArchived: Bool
 
     enum CodingKeys: String, CodingKey {
         case kanbanHome = "kanban_home"
+        case hermesHome = "hermes_home"
         case includeArchived = "include_archived"
     }
 }
 
 private struct KanbanBoardRequest: Encodable {
     let kanbanHome: String
+    let hermesHome: String
     let boardSlug: String
     let includeArchived: Bool
 
     enum CodingKeys: String, CodingKey {
         case kanbanHome = "kanban_home"
+        case hermesHome = "hermes_home"
         case boardSlug = "board_slug"
         case includeArchived = "include_archived"
     }
@@ -2379,11 +2387,13 @@ private struct KanbanBoardRequest: Encodable {
 
 private struct KanbanTaskDetailRequest: Encodable {
     let kanbanHome: String
+    let hermesHome: String
     let boardSlug: String
     let taskID: String
 
     enum CodingKeys: String, CodingKey {
         case kanbanHome = "kanban_home"
+        case hermesHome = "hermes_home"
         case boardSlug = "board_slug"
         case taskID = "task_id"
     }
@@ -2391,6 +2401,7 @@ private struct KanbanTaskDetailRequest: Encodable {
 
 private struct KanbanBoardCreateRequest: Encodable {
     let kanbanHome: String
+    let hermesHome: String
     let slug: String
     let name: String?
     let description: String?
@@ -2400,6 +2411,7 @@ private struct KanbanBoardCreateRequest: Encodable {
 
     enum CodingKeys: String, CodingKey {
         case kanbanHome = "kanban_home"
+        case hermesHome = "hermes_home"
         case slug
         case name
         case description
@@ -2411,16 +2423,19 @@ private struct KanbanBoardCreateRequest: Encodable {
 
 private struct KanbanBoardArchiveRequest: Encodable {
     let kanbanHome: String
+    let hermesHome: String
     let boardSlug: String
 
     enum CodingKeys: String, CodingKey {
         case kanbanHome = "kanban_home"
+        case hermesHome = "hermes_home"
         case boardSlug = "board_slug"
     }
 }
 
 private struct KanbanHomeSubscriptionRequest: Encodable {
     let kanbanHome: String
+    let hermesHome: String
     let boardSlug: String
     let taskID: String
     let platform: String
@@ -2428,6 +2443,7 @@ private struct KanbanHomeSubscriptionRequest: Encodable {
 
     enum CodingKeys: String, CodingKey {
         case kanbanHome = "kanban_home"
+        case hermesHome = "hermes_home"
         case boardSlug = "board_slug"
         case taskID = "task_id"
         case platform
@@ -2437,6 +2453,7 @@ private struct KanbanHomeSubscriptionRequest: Encodable {
 
 private struct KanbanMutationRequest: Encodable {
     let kanbanHome: String
+    let hermesHome: String
     let boardSlug: String
     let author: String
     let action: String
@@ -2460,6 +2477,7 @@ private struct KanbanMutationRequest: Encodable {
 
     enum CodingKeys: String, CodingKey {
         case kanbanHome = "kanban_home"
+        case hermesHome = "hermes_home"
         case boardSlug = "board_slug"
         case author
         case action

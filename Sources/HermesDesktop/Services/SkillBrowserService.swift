@@ -759,7 +759,7 @@ final class SkillBrowserService: @unchecked Sendable {
 
     private func launchableSkillRegistryCommand(for connection: ConnectionProfile) -> String {
         """
-        export HERMES_HOME="\(connection.remoteHermesHomeShellExpression)"; if [ -x "$HOME/.local/bin/hermes" ]; then HERMES_BIN="$HOME/.local/bin/hermes"; elif command -v hermes >/dev/null 2>&1; then HERMES_BIN="$(command -v hermes)"; else printf 'Hermes CLI not found.\\n' >&2; exit 127; fi; COLUMNS=240 "$HERMES_BIN" skills list --enabled-only
+        export HERMES_HOME="\(connection.remoteHermesHomeShellExpression)"; export PATH="\(connection.remoteHermesSearchPathShellExpression)"; if command -v hermes >/dev/null 2>&1; then HERMES_BIN="$(command -v hermes)"; else printf 'Hermes CLI not found.\\n' >&2; exit 127; fi; COLUMNS=240 "$HERMES_BIN" skills list --enabled-only
         """
     }
 }

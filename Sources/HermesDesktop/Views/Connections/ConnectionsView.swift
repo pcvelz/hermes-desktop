@@ -216,14 +216,14 @@ private struct ConnectionCard: View {
                         metadataRow(label: "Target", value: resolvedTarget)
                         metadataRow(label: "SSH user", value: connection.trimmedUser ?? "Default")
                         metadataRow(label: "Port", value: displayPort)
-                        metadataRow(label: "Hermes profile", value: connection.resolvedHermesProfileName)
+                        metadataRow(label: hermesScopeLabel, value: hermesScopeValue)
                     }
 
                     VStack(alignment: .leading, spacing: 12) {
                         metadataRow(label: "Target", value: resolvedTarget)
                         metadataRow(label: "SSH user", value: connection.trimmedUser ?? "Default")
                         metadataRow(label: "Port", value: displayPort)
-                        metadataRow(label: "Hermes profile", value: connection.resolvedHermesProfileName)
+                        metadataRow(label: hermesScopeLabel, value: hermesScopeValue)
                     }
                 }
 
@@ -278,6 +278,14 @@ private struct ConnectionCard: View {
 
     private var resolvedTarget: String {
         connection.trimmedAlias ?? connection.trimmedHost ?? "Not set"
+    }
+
+    private var hermesScopeLabel: String {
+        connection.usesCustomHermesHome ? "Custom Hermes home" : "Hermes profile"
+    }
+
+    private var hermesScopeValue: String {
+        connection.trimmedCustomHermesHomePath ?? connection.resolvedHermesProfileName
     }
 
     private var displayPort: String {

@@ -10,10 +10,12 @@ struct ConnectionEditorSheet: View {
         case user
         case port
         case hermesProfile
+        case customHermesHome
     }
 
     @State private var draft: ConnectionProfile
     @State private var portText: String
+    @State private var showsCustomHermesHomeOptions: Bool
     @FocusState private var focusedField: Field?
     let isEditing: Bool
     let onSave: (ConnectionProfile) -> Void
@@ -21,6 +23,7 @@ struct ConnectionEditorSheet: View {
     init(connection: ConnectionProfile, isEditing: Bool, onSave: @escaping (ConnectionProfile) -> Void) {
         _draft = State(initialValue: connection)
         _portText = State(initialValue: connection.sshPort.map(String.init) ?? "")
+        _showsCustomHermesHomeOptions = State(initialValue: connection.customHermesHomePath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
         self.isEditing = isEditing
         self.onSave = onSave
     }
@@ -91,6 +94,32 @@ struct ConnectionEditorSheet: View {
                                 TextField(L10n.string("default or researcher"), text: hermesProfileBinding)
                                     .focused($focusedField, equals: .hermesProfile)
                                     .textFieldStyle(.roundedBorder)
+                            }
+
+                            DisclosureGroup(
+                                isExpanded: $showsCustomHermesHomeOptions
+                            ) {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    EditorField(label: "Remote Hermes home path") {
+                                        TextField(L10n.string("~/.hermes-work or /opt/data"), text: customHermesHomeBinding)
+                                            .focused($focusedField, equals: .customHermesHome)
+                                            .textFieldStyle(.roundedBorder)
+                                    }
+
+                                    Text(L10n.string("Only use this if Hermes lives outside the standard `~/.hermes` or `~/.hermes/profiles/<name>` layout on the remote host."))
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+
+                                    Text(L10n.string("Leave this empty for the normal setup. When set, Hermes Desktop uses this path as `HERMES_HOME` for Sessions, Files, Skills, Usage, Cron, chat, and Terminal."))
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                .padding(.top, 8)
+                            } label: {
+                                Text(L10n.string("Custom Hermes home (advanced)"))
+                                    .font(.headline)
                             }
 
                             if let validationMessage {
@@ -231,6 +260,14 @@ struct ConnectionEditorSheet: View {
             draft.hermesProfile ?? ""
         } set: { newValue in
             draft.hermesProfile = newValue
+        }
+    }
+
+    private var customHermesHomeBinding: Binding<String> {
+        Binding {
+            draft.customHermesHomePath ?? ""
+        } set: { newValue in
+            draft.customHermesHomePath = newValue
         }
     }
 }

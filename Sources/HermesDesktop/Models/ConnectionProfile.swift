@@ -8,6 +8,7 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     var sshPort: Int?
     var sshUser: String
     var hermesProfile: String?
+    var customHermesHomePath: String?
     var createdAt: Date
     var updatedAt: Date
     var lastConnectedAt: Date?
@@ -20,6 +21,7 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
         sshPort: Int? = nil,
         sshUser: String = "",
         hermesProfile: String? = nil,
+        customHermesHomePath: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         lastConnectedAt: Date? = nil
@@ -31,6 +33,7 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
         self.sshPort = sshPort
         self.sshUser = sshUser
         self.hermesProfile = hermesProfile
+        self.customHermesHomePath = customHermesHomePath
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.lastConnectedAt = lastConnectedAt
@@ -59,15 +62,37 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
         return value
     }
 
+    var trimmedCustomHermesHomePath: String? {
+        guard let customHermesHomePath else { return nil }
+        let value = customHermesHomePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        return value.normalizedCustomHermesHomePath
+    }
+
+    var usesCustomHermesHome: Bool {
+        trimmedCustomHermesHomePath != nil
+    }
+
     var resolvedHermesProfileName: String {
-        trimmedHermesProfile ?? "default"
+        if let trimmedCustomHermesHomePath {
+            return trimmedCustomHermesHomePath.displayNameForCustomHermesHomePath
+        }
+        return trimmedHermesProfile ?? "default"
     }
 
     var usesDefaultHermesProfile: Bool {
-        trimmedHermesProfile == nil
+        !usesCustomHermesHome && trimmedHermesProfile == nil
+    }
+
+    var cliHermesProfileName: String? {
+        guard !usesCustomHermesHome else { return nil }
+        return trimmedHermesProfile
     }
 
     var remoteHermesHomePath: String {
+        if let trimmedCustomHermesHomePath {
+            return trimmedCustomHermesHomePath
+        }
         if let trimmedHermesProfile {
             return "~/.hermes/profiles/\(trimmedHermesProfile)"
         }
@@ -98,10 +123,14 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     func applyingHermesProfile(named profileName: String) -> ConnectionProfile {
         var copy = self
         copy.hermesProfile = profileName
+        copy.customHermesHomePath = nil
         return copy.updated()
     }
 
     var remoteHermesHomeShellExpression: String {
+        if let trimmedCustomHermesHomePath {
+            return trimmedCustomHermesHomePath.customHermesHomeShellExpression
+        }
         if let trimmedHermesProfile {
             let escapedProfile = trimmedHermesProfile.escapedForDoubleQuotedShellArgument
             return "$HOME/.hermes/profiles/\(escapedProfile)"
@@ -110,23 +139,55 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
         return "$HOME/.hermes"
     }
 
+    var remoteHermesSearchPathShellExpression: String {
+        let entries = [
+            "\(remoteHermesHomeShellExpression)/hermes-agent/venv/bin",
+            "$HOME/.local/bin",
+            "$HOME/.hermes/hermes-agent/venv/bin",
+            "$HOME/.cargo/bin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "$PATH"
+        ]
+
+        var orderedEntries = [String]()
+        var seen = Set<String>()
+        for entry in entries where seen.insert(entry).inserted {
+            orderedEntries.append(entry)
+        }
+        return orderedEntries.joined(separator: ":")
+    }
+
+    var remoteHermesCommandPrefix: String {
+        """
+        if [ -x "$HERMES_HOME/hermes-agent/venv/bin/hermes" ]; then HERMES_BIN="$HERMES_HOME/hermes-agent/venv/bin/hermes"; elif [ -x "$HOME/.local/bin/hermes" ]; then HERMES_BIN="$HOME/.local/bin/hermes"; elif [ -x "$HOME/.hermes/hermes-agent/venv/bin/hermes" ]; then HERMES_BIN="$HOME/.hermes/hermes-agent/venv/bin/hermes"; elif command -v hermes >/dev/null 2>&1; then HERMES_BIN="$(command -v hermes)"; else printf 'Hermes CLI not found.\\n' >&2; exit 127; fi; "$HERMES_BIN"
+        """
+    }
+
+    func remoteHermesCommandLine(arguments: [String]) -> String {
+        let quotedArguments = arguments.map(\.shellQuotedForTerminalCommand).joined(separator: " ")
+        guard !quotedArguments.isEmpty else { return remoteHermesCommandPrefix }
+        return "\(remoteHermesCommandPrefix) \(quotedArguments)"
+    }
+
     var remoteShellBootstrapCommand: String {
         remoteShellBootstrapCommand()
     }
 
     func remoteShellBootstrapCommand(startupCommandLine: String? = nil) -> String {
         let exportCommand = "export HERMES_HOME=\"\(remoteHermesHomeShellExpression)\""
+        let pathCommand = "export PATH=\"\(remoteHermesSearchPathShellExpression)\""
 
         let innerCommand: String
         if let startupCommandLine,
            !startupCommandLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let startupSequence = """
-\(startupCommandLine); status=$?; if [ "$status" -ne 0 ]; then printf '\\n[Hermes Desktop] Startup command exited with status %s.\\n' "$status"; fi; exec "${SHELL:-/bin/zsh}" -l
+\(startupCommandLine); hermes_bootstrap_exit_code=$?; if [ "$hermes_bootstrap_exit_code" -ne 0 ]; then printf '\\n[Hermes Desktop] Startup command exited with status %s.\\n' "$hermes_bootstrap_exit_code"; fi; exec "${SHELL:-/bin/zsh}" -l
 """
             let escapedStartupCommand = startupSequence.escapedForDoubleQuotedShellArgument
-            innerCommand = "\(exportCommand); exec \"${SHELL:-/bin/zsh}\" -lc \"\(escapedStartupCommand)\""
+            innerCommand = "\(exportCommand); \(pathCommand); exec \"${SHELL:-/bin/zsh}\" -lc \"\(escapedStartupCommand)\""
         } else {
-            innerCommand = "\(exportCommand); exec \"${SHELL:-/bin/zsh}\" -l"
+            innerCommand = "\(exportCommand); \(pathCommand); exec \"${SHELL:-/bin/zsh}\" -l"
         }
 
         return "exec /bin/sh -c \"\(innerCommand.escapedForOuterDoubleQuotedShellCommand)\""
@@ -201,12 +262,25 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
             return error
         }
 
+        if trimmedHermesProfile != nil && trimmedCustomHermesHomePath != nil {
+            return "Choose either a Hermes profile or a custom Hermes home path."
+        }
+
         if let trimmedHermesProfile {
             if trimmedHermesProfile.contains("/") || trimmedHermesProfile == "." || trimmedHermesProfile == ".." {
                 return "Hermes profile must be a profile name, not a path."
             }
             if trimmedHermesProfile.containsControlCharacter {
                 return "Hermes profile contains unsupported control characters."
+            }
+        }
+
+        if let trimmedCustomHermesHomePath {
+            if trimmedCustomHermesHomePath.containsControlCharacter {
+                return "Custom Hermes home contains unsupported control characters."
+            }
+            if !trimmedCustomHermesHomePath.isValidCustomHermesHomePath {
+                return "Custom Hermes home must start with `~/` or `/`."
             }
         }
 
@@ -220,6 +294,7 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
         copy.sshHost = sshHost.trimmingCharacters(in: .whitespacesAndNewlines)
         copy.sshUser = sshUser.trimmingCharacters(in: .whitespacesAndNewlines)
         copy.hermesProfile = trimmedHermesProfile
+        copy.customHermesHomePath = trimmedCustomHermesHomePath
         if let sshPort = sshPort, sshPort <= 0 {
             copy.sshPort = nil
         }
@@ -229,6 +304,45 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
 }
 
 private extension String {
+    var normalizedCustomHermesHomePath: String {
+        if self == "/" || self == "~" {
+            return self
+        }
+        if self == "~/" {
+            return "~"
+        }
+
+        var trimmed = self
+        while trimmed.count > 1, trimmed.hasSuffix("/") {
+            trimmed.removeLast()
+        }
+        return trimmed
+    }
+
+    var isValidCustomHermesHomePath: Bool {
+        self == "~" || hasPrefix("~/") || hasPrefix("/")
+    }
+
+    var customHermesHomeShellExpression: String {
+        if self == "~" {
+            return "$HOME"
+        }
+        if hasPrefix("~/") {
+            let suffix = String(dropFirst(2)).escapedForDoubleQuotedShellArgument
+            return "$HOME/\(suffix)"
+        }
+        return escapedForDoubleQuotedShellArgument
+    }
+
+    var displayNameForCustomHermesHomePath: String {
+        let trimmed = normalizedCustomHermesHomePath
+        if trimmed == "~" || trimmed == "/" {
+            return trimmed
+        }
+
+        return trimmed.split(separator: "/").last.map(String.init) ?? trimmed
+    }
+
     var escapedForDoubleQuotedShellArgument: String {
         replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
