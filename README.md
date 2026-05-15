@@ -51,7 +51,7 @@ which path the app is using, and where the work is happening.
 Six previewed views from the app: sessions, workflows, Kanban, workspace
 files, usage, and terminal.
 
-## At A Glance
+## What Hermes Desktop gives you
 
 Hermes Desktop is for people who want a native Mac workbench for the Hermes
 host they already use, without adding another layer to trust.
@@ -71,7 +71,7 @@ If Hermes runs there and SSH already works, Hermes Desktop will usually meet
 you there. That includes a Raspberry Pi, another Mac, a VPS, a remote server,
 or the same Mac through `ssh localhost` or a local SSH alias.
 
-## Design Model
+## How the app is designed
 
 The app talks to the selected host over SSH. Sessions come from the remote
 session store. Kanban comes from the upstream Hermes Kanban home. Cron jobs
@@ -93,7 +93,7 @@ configuration breaks, the app still has the direct SSH path: inspect the host,
 edit the relevant files, open a terminal, and repair the system from the place
 where the state actually lives.
 
-### Desktop And Web Dashboard
+### Desktop and web dashboard
 
 Hermes also has an official web dashboard. The two tools are complementary.
 
@@ -108,7 +108,7 @@ and a real terminal without adding another backend around Hermes.
 The boundary is simple: browser for administration, Mac app for direct host
 work.
 
-## Before You Install
+## Before you install
 
 Setup is intentionally lightweight. Before you install, make sure you have:
 
@@ -135,7 +135,7 @@ password or host key confirmation, the app is usually ready too:
 ssh your-host
 ```
 
-## Install The App
+## Install the app
 
 1. Download `HermesDesktop.app.zip` from the
    [latest GitHub Release](https://github.com/dodo-reach/hermes-desktop/releases/latest).
@@ -164,14 +164,14 @@ For the exact distribution and verification details, read
 [docs/distribution.md](docs/distribution.md). If you prefer not to trust the
 release zip, build from source instead.
 
-## Connect A Host
+## Connect a host
 
 Open the app, go to `Connections`, create a profile, then click `Test` and
 `Use Host`.
 
 You can connect with an SSH alias or with host details directly.
 
-### Use An SSH Alias
+### Use an SSH alias
 
 An SSH alias is the cleanest path for most people. It is the short name you
 already use in Terminal:
@@ -193,7 +193,7 @@ In the app:
 - set `SSH alias` to `hermes-home`
 - leave `Host`, `User`, and `Port` empty unless you want explicit overrides
 
-### Use Host Details
+### Use host details
 
 If you normally connect with:
 
@@ -207,7 +207,7 @@ then in the app:
 - `User`: `alex`
 - `Port`: `22` or your real SSH port
 
-### Select A Hermes Profile
+### Choose a Hermes profile
 
 Hermes Desktop can target multiple profiles on the same SSH host.
 
@@ -220,14 +220,14 @@ The profile is not just a label. It flows through the app: Overview, Sessions,
 Workflows, Usage, Cron Jobs, Files, Skills, chat, and Terminal all stay
 aligned with the selected host and profile.
 
-### Connect To The Same Mac
+### Connect to the same Mac
 
 If Hermes runs on the same Mac, the model stays the same: SSH.
 
 Use `localhost`, your local hostname, or a local SSH alias. Hermes Desktop
 still connects over SSH and does not read those files directly from disk.
 
-### What `Test` Checks
+### What `Test` checks
 
 `Test` is a preflight. It checks that the SSH target is reachable,
 authentication works without interactive prompts, and `python3` is available in
@@ -236,7 +236,7 @@ the remote SSH environment used by the app.
 Feature-specific requirements, such as the remote `hermes` CLI path and Kanban
 support, are checked when those sections actually run.
 
-## Core Workflows
+## What you can do in the app
 
 Hermes Desktop is intentionally focused. It is not trying to become a cloud
 workspace, a remote IDE, or a generic SFTP client.
@@ -274,7 +274,7 @@ It gives the real Hermes workflow a native workbench:
   Opens a real SSH shell inside the app, with tabs, theme presets, color
   controls, and enough room for multi-profile, multi-agent work.
 
-## Choosing A Chat Surface
+## Which chat surface to use
 
 Hermes Desktop does not replace the terminal surfaces Hermes already gives you.
 It lets you choose the right one for the job.
@@ -289,7 +289,7 @@ It lets you choose the right one for the job.
 All of these paths still run Hermes on the selected host. The choice is about
 surface area, not about creating a second source of truth.
 
-## Trust Model
+## Trust and verification
 
 If you are evaluating whether to trust Hermes Desktop, start here:
 
@@ -329,7 +329,7 @@ Checksums are a useful integrity check, not a trust model. They tell you
 whether your download matches the published release asset. They do not replace
 source review, local builds, or understanding the current distribution model.
 
-## Build Locally
+## Build locally
 
 For cautious users, building from source is the clearest trust path available
 in this repo today. For local development, it is also the supported path for
@@ -435,7 +435,7 @@ Before saving an edited workspace file or skill, the app checks whether the
 remote file still matches the version you opened. If it changed, save is
 blocked and your local edits stay intact until you reload intentionally.
 
-## Where It Goes Next
+## Where Hermes Desktop goes next
 
 Most of the original roadmap is now shipped.
 

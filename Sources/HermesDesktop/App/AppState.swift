@@ -116,8 +116,11 @@ final class AppState: ObservableObject {
     private var sessionTranscriptPollingTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
 
-    init(updateCheckService: UpdateCheckService = UpdateCheckService()) {
-        let paths = AppPaths()
+    convenience init(updateCheckService: UpdateCheckService = UpdateCheckService()) {
+        self.init(paths: AppPaths(), updateCheckService: updateCheckService)
+    }
+
+    init(paths: AppPaths, updateCheckService: UpdateCheckService = UpdateCheckService()) {
         let connectionStore = ConnectionStore(paths: paths)
         let sshTransport = SSHTransport(paths: paths)
         let workflowLaunchLogURL = paths.applicationSupportURL
@@ -365,12 +368,14 @@ final class AppState: ObservableObject {
         guard !hasPerformedAutomaticUpdateCheck else { return }
         guard shouldRunAutomaticUpdateCheck() else { return }
         hasPerformedAutomaticUpdateCheck = true
-        connectionStore.lastAutomaticUpdateCheckAt = Date()
-        await checkForUpdates(presentsCurrentResult: false)
+        let didCompleteCheck = await checkForUpdates(presentsCurrentResult: false)
+        if didCompleteCheck {
+            connectionStore.lastAutomaticUpdateCheckAt = Date()
+        }
     }
 
     func checkForUpdatesFromCommand() async {
-        await checkForUpdates(presentsCurrentResult: true)
+        _ = await checkForUpdates(presentsCurrentResult: true)
     }
 
     func dismissAvailableUpdate() {
@@ -2292,8 +2297,9 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func checkForUpdates(presentsCurrentResult: Bool) async {
-        guard !isCheckingForUpdates else { return }
+    @discardableResult
+    private func checkForUpdates(presentsCurrentResult: Bool) async -> Bool {
+        guard !isCheckingForUpdates else { return false }
 
         isCheckingForUpdates = true
         if presentsCurrentResult {
@@ -2317,6 +2323,7 @@ final class AppState: ObservableObject {
                 )
                 setStatusMessage(nil)
             }
+            return true
         } catch {
             isCheckingForUpdates = false
             if presentsCurrentResult {
@@ -2326,6 +2333,7 @@ final class AppState: ObservableObject {
                 )
                 setStatusMessage(nil)
             }
+            return false
         }
     }
 

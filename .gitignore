@@ -9,6 +9,7 @@
 !/docs/releases/*.md
 /private/
 /.swiftpm-home
+/.vscode
 /packaging/AppIcon-1024.png
 /packaging/AppIcon.iconset/
 /packaging/HermesDesktop.icns
