@@ -1,6 +1,7 @@
 # Hermes Desktop v0.8.1
 
-`v0.8.1` tightens a few important edges without changing the product model.
+`v0.8.1` is a focused polish release for workflows, startup reliability, and
+custom Hermes setups.
 
 Hermes Desktop still connects directly to the selected Hermes host over SSH.
 The host remains the source of truth. This release does not add a gateway API,
@@ -8,12 +9,12 @@ helper daemon, local mirror, or background sync layer.
 
 ## Highlights
 
-- supports custom Hermes home paths more cleanly, including profile-aware path
-  resolution and terminal/bootstrap flows
-- hardens workflow launch prompt delivery and adds better diagnostics around
-  startup handoff into Terminal
-- avoids treating a failed automatic update check as a successful one, so the
-  app can retry later instead of silently suppressing checks for a day
+- workflows now support even longer prompts, giving the new workflow launcher
+  more room for richer setup and handoff
+- workflow startup has been hardened for more reliable prompt delivery into
+  Terminal, with better diagnostics around the handoff path
+- custom Hermes home paths are now supported more cleanly across path
+  resolution, command launch, and terminal bootstrap flows
 
 ## Compatibility
 
