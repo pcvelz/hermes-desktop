@@ -2,9 +2,9 @@
 import Foundation
 import NIOCore
 @preconcurrency import NIOSSH
+@preconcurrency import SwiftTerm
 import SwiftUI
 import UIKit
-import WebKit
 
 enum TerminalQuickKey: String, CaseIterable, Identifiable {
     case escape
@@ -72,12 +72,12 @@ struct TerminalAppearance: Equatable {
         foregroundHex: "#EDF1F7"
     )
 
-    var backgroundColor: Color {
-        Color(uiColor: backgroundUIColor)
+    var backgroundColor: SwiftUI.Color {
+        SwiftUI.Color(uiColor: backgroundUIColor)
     }
 
-    var foregroundColor: Color {
-        Color(uiColor: foregroundUIColor)
+    var foregroundColor: SwiftUI.Color {
+        SwiftUI.Color(uiColor: foregroundUIColor)
     }
 
     var backgroundUIColor: UIColor {
@@ -88,25 +88,31 @@ struct TerminalAppearance: Equatable {
         UIColor(terminalHex: foregroundHex) ?? UIColor(red: 237 / 255, green: 241 / 255, blue: 247 / 255, alpha: 1)
     }
 
-    var themeScript: String {
-        let payload = """
-        {
-          "background": "\(backgroundHex)",
-          "foreground": "\(foregroundHex)"
-        }
-        """
-        return "window.HermesTerminal && window.HermesTerminal.setTheme(\(payload));"
+    var cursorUIColor: UIColor {
+        foregroundUIColor.withAlphaComponent(0.92)
     }
+}
+
+struct PersistedTerminalWorkspace: Codable {
+    var selectedSessionID: UUID?
+    var sessions: [PersistedTerminalSession]
+}
+
+struct PersistedTerminalSession: Codable {
+    let id: UUID
+    let connection: ConnectionProfile
+    let startupCommandLine: String?
+    let titleHint: String
 }
 
 @MainActor
 final class HermesTerminalSession: ObservableObject, Identifiable {
-    let id = UUID()
+    let id: UUID
     let connection: ConnectionProfile
     let startupCommandLine: String?
     let workspaceScopeFingerprint: String
     let hostConnectionFingerprint: String
-    let profileName: String
+    let contextLabel: String
 
     @Published var terminalStatus: String = "Ready"
     @Published private(set) var isConnected = false
@@ -114,48 +120,55 @@ final class HermesTerminalSession: ObservableObject, Identifiable {
     @Published private(set) var hasStarted = false
     @Published var displayTitle: String
 
+    var onSnapshotChange: (() -> Void)?
+
     private let sshTransport = SSHTransport()
-    private var webView: WKWebView?
-    private let messageProxy = TerminalMessageProxy()
+    private let bridge = HermesTerminalBridge()
+    private var hostView: HermesNativeTerminalHostView?
     private var task: Task<Void, Never>?
     private var currentClient: SSHClient?
     private var currentWriter: TTYStdinWriter?
     private var activeAttemptID = UUID()
     private var resizeTask: Task<Void, Never>?
-    private var layoutRefreshTask: Task<Void, Never>?
     private var lastSentWindowSize: TerminalWindowSize?
     private var currentWindowSize = TerminalWindowSize.fallback
-    private var isTerminalReady = false
-    private var pendingJavaScript: [String] = []
     private var transcriptBuffer = Data()
     private let maxTranscriptBytes = 1_000_000
     private var currentAppearance = TerminalAppearance.default
 
     init(
+        id: UUID = UUID(),
         connection: ConnectionProfile,
         startupCommandLine: String? = nil,
         titleHint: String? = nil
     ) {
+        self.id = id
         self.connection = connection
         self.startupCommandLine = startupCommandLine
         self.workspaceScopeFingerprint = connection.workspaceScopeFingerprint
         self.hostConnectionFingerprint = connection.hostConnectionFingerprint
-        self.profileName = connection.resolvedHermesProfileName
+        self.contextLabel = startupCommandLine == nil ? "Default shell" : connection.resolvedHermesProfileName
         self.displayTitle = titleHint ?? connection.resolvedHermesProfileName
-        messageProxy.session = self
+        bridge.session = self
     }
 
     var chipSubtitle: String {
-        connection.label
+        contextLabel
+    }
+
+    var snapshot: PersistedTerminalSession {
+        PersistedTerminalSession(
+            id: id,
+            connection: connection,
+            startupCommandLine: startupCommandLine,
+            titleHint: displayTitle
+        )
     }
 
     func attach(to container: TerminalContainerView) {
-        let webView = ensureWebView()
-        if webView.superview !== container {
-            webView.removeFromSuperview()
-            container.embed(webView: webView)
-        }
-        flushPendingJavaScriptIfNeeded()
+        let hostView = ensureHostView()
+        container.mount(hostView)
+        applyAppearanceIfNeeded()
         refreshLayout()
     }
 
@@ -171,23 +184,20 @@ final class HermesTerminalSession: ObservableObject, Identifiable {
 
     func close() {
         disconnect(updateStatus: false)
-        layoutRefreshTask?.cancel()
-        layoutRefreshTask = nil
-        webView?.stopLoading()
-        webView?.navigationDelegate = nil
-        HermesTerminalMessageName.allCases.forEach { name in
-            webView?.configuration.userContentController.removeScriptMessageHandler(forName: name.rawValue)
-        }
-        webView = nil
+        hostView?.terminalView.terminalDelegate = nil
+        hostView = nil
     }
 
     func dismissKeyboard() {
-        webView?.endEditing(true)
-        enqueueJavaScript("window.HermesTerminal && window.HermesTerminal.blur();")
+        hostView?.dismissKeyboard()
+    }
+
+    func focusInput() {
+        _ = hostView?.terminalView.becomeFirstResponder()
     }
 
     func ensurePromptVisible() {
-        enqueueJavaScript("window.HermesTerminal && window.HermesTerminal.scrollToBottom();")
+        hostView?.scrollToBottom()
     }
 
     func sendQuickKey(_ key: TerminalQuickKey) {
@@ -197,52 +207,48 @@ final class HermesTerminalSession: ObservableObject, Identifiable {
     func updateAppearance(_ appearance: TerminalAppearance) {
         guard currentAppearance != appearance else { return }
         currentAppearance = appearance
-        enqueueJavaScript(appearance.themeScript)
-        refreshLayout()
+        applyAppearanceIfNeeded()
     }
 
     func refreshLayout() {
-        layoutRefreshTask?.cancel()
-        layoutRefreshTask = Task { [weak self] in
-            guard let self else { return }
-            self.lastSentWindowSize = nil
-            self.enqueueJavaScript("window.HermesTerminal && window.HermesTerminal.refreshLayout();")
-            try? await Task.sleep(nanoseconds: 80_000_000)
-            guard !Task.isCancelled else { return }
-            self.enqueueJavaScript("window.HermesTerminal && window.HermesTerminal.refreshLayout();")
-            try? await Task.sleep(nanoseconds: 180_000_000)
-            guard !Task.isCancelled else { return }
-            self.enqueueJavaScript("window.HermesTerminal && window.HermesTerminal.refreshLayout();")
+        hostView?.refreshLayout()
+        hostView?.scrollToBottomIfNearEnd()
+    }
+
+    func handleTerminalSizeChange(cols: Int, rows: Int, in terminalView: TerminalView) {
+        currentWindowSize = normalized(
+            TerminalWindowSize(
+                cols: cols,
+                rows: rows,
+                pixelWidth: Int(terminalView.bounds.width * terminalView.contentScaleFactor),
+                pixelHeight: Int(terminalView.bounds.height * terminalView.contentScaleFactor)
+            )
+        )
+        handleViewportChange(currentWindowSize)
+    }
+
+    func updateDisplayTitle(_ title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != displayTitle else { return }
+        displayTitle = trimmed
+        onSnapshotChange?()
+    }
+
+    func openLink(_ link: String) {
+        guard let url = URL(string: link) else { return }
+        UIApplication.shared.open(url)
+    }
+
+    func copyToClipboard(_ content: Data) {
+        if let string = String(data: content, encoding: .utf8), !string.isEmpty {
+            UIPasteboard.general.string = string
+        } else {
+            UIPasteboard.general.setData(content, forPasteboardType: "public.data")
         }
     }
 
-    func terminalDidBecomeReady(windowSize: TerminalWindowSize) {
-        isTerminalReady = true
-        currentWindowSize = normalized(windowSize)
-        enqueueJavaScript(currentAppearance.themeScript)
-        resetAndReplayTranscript()
-        flushPendingJavaScriptIfNeeded()
-        handleViewportChange(currentWindowSize)
-        enqueueJavaScript("window.HermesTerminal && window.HermesTerminal.focus();")
-        refreshLayout()
-    }
-
-    func terminalDidResize(windowSize: TerminalWindowSize) {
-        currentWindowSize = normalized(windowSize)
-        handleViewportChange(currentWindowSize)
-    }
-
-    func terminalDidReceiveInput(_ data: String) {
-        sendInput(sanitizedTerminalInput(data))
-    }
-
-    func terminalDidReceiveBinary(_ data: String) {
-        let bytes = data.unicodeScalars.map { UInt8($0.value & 0xFF) }
-        sendBytes(bytes)
-    }
-
-    func terminalContentDidStartLoading() {
-        isTerminalReady = false
+    func sendTerminalInput(_ data: ArraySlice<UInt8>) {
+        sendBytes(Array(data))
     }
 
     private func connect() {
@@ -252,7 +258,10 @@ final class HermesTerminalSession: ObservableObject, Identifiable {
         isConnected = false
         hasStarted = false
         terminalStatus = "Connecting to \(connection.displayDestination)..."
-        enqueueJavaScript("window.HermesTerminal && window.HermesTerminal.reset();")
+
+        if let hostView {
+            resetTranscript(on: hostView.terminalView)
+        }
 
         task = Task { [weak self] in
             await self?.run(attemptID: attemptID)
@@ -317,13 +326,12 @@ final class HermesTerminalSession: ObservableObject, Identifiable {
                     self.isConnecting = false
                     self.hasStarted = true
                     self.terminalStatus = "Connected"
-                    self.enqueueJavaScript("window.HermesTerminal && window.HermesTerminal.focus();")
+                    self.focusInput()
                 }
 
-                let bootstrap = self.sshTransport.shellBootstrapSequence(
-                    for: self.connection,
-                    startupCommandLine: self.startupCommandLine
-                ) + "\n"
+                let bootstrap = await MainActor.run {
+                    self.makeBootstrapSequence() + "\n"
+                }
                 try await outbound.write(ByteBuffer(string: bootstrap))
 
                 for try await chunk in inbound {
@@ -364,6 +372,13 @@ final class HermesTerminalSession: ObservableObject, Identifiable {
         }
     }
 
+    private func makeBootstrapSequence() -> String {
+        if startupCommandLine == nil {
+            return connection.remoteShellBootstrapCommand()
+        }
+        return connection.remoteShellBootstrapCommand(startupCommandLine: startupCommandLine)
+    }
+
     private func handleViewportChange(_ windowSize: TerminalWindowSize) {
         guard let writer = currentWriter else { return }
         let normalizedSize = normalized(windowSize)
@@ -391,7 +406,7 @@ final class HermesTerminalSession: ObservableObject, Identifiable {
     }
 
     private func sendBytes(_ bytes: [UInt8]) {
-        guard let writer = currentWriter else { return }
+        guard !bytes.isEmpty, let writer = currentWriter else { return }
         Task {
             try? await writer.write(ByteBuffer(bytes: bytes))
         }
@@ -399,9 +414,7 @@ final class HermesTerminalSession: ObservableObject, Identifiable {
 
     private func writeToTerminal(_ bytes: [UInt8]) {
         appendToTranscript(bytes)
-        guard isTerminalReady, let webView else { return }
-        let script = makeWriteScript(for: bytes)
-        webView.evaluateJavaScript(script)
+        hostView?.feed(byteArray: bytes)
     }
 
     private func appendToTranscript(_ bytes: [UInt8]) {
@@ -412,40 +425,40 @@ final class HermesTerminalSession: ObservableObject, Identifiable {
         }
     }
 
-    private func resetAndReplayTranscript() {
-        guard isTerminalReady, let webView else { return }
-        webView.evaluateJavaScript("window.HermesTerminal && window.HermesTerminal.reset();")
+    private func replayTranscriptIfNeeded(on terminalView: TerminalView) {
         guard !transcriptBuffer.isEmpty else { return }
-        let chunkSize = 16_384
-        var offset = 0
-        while offset < transcriptBuffer.count {
-            let upperBound = min(offset + chunkSize, transcriptBuffer.count)
-            let chunk = Array(transcriptBuffer[offset..<upperBound])
-            webView.evaluateJavaScript(makeWriteScript(for: chunk))
-            offset = upperBound
-        }
+        terminalView.feed(byteArray: Array(transcriptBuffer)[...])
     }
 
-    private func makeWriteScript(for bytes: [UInt8]) -> String {
-        let base64 = Data(bytes).base64EncodedString()
-        return "window.HermesTerminal && window.HermesTerminal.writeBase64('\(base64)');"
+    private func resetTranscript(on terminalView: TerminalView) {
+        transcriptBuffer.removeAll(keepingCapacity: true)
+        terminalView.feed(text: "\u{1B}c")
     }
 
-    private func enqueueJavaScript(_ script: String) {
-        guard let webView, isTerminalReady else {
-            pendingJavaScript.append(script)
-            return
+    private func ensureHostView() -> HermesNativeTerminalHostView {
+        if let hostView {
+            hostView.terminalView.terminalDelegate = bridge
+            return hostView
         }
-        webView.evaluateJavaScript(script)
+
+        let hostView = HermesNativeTerminalHostView(frame: .zero)
+        hostView.terminalView.terminalDelegate = bridge
+        self.hostView = hostView
+        applyAppearance(to: hostView.terminalView)
+        replayTranscriptIfNeeded(on: hostView.terminalView)
+        return hostView
     }
 
-    private func flushPendingJavaScriptIfNeeded() {
-        guard isTerminalReady, let webView, !pendingJavaScript.isEmpty else { return }
-        let scripts = pendingJavaScript
-        pendingJavaScript.removeAll()
-        for script in scripts {
-            webView.evaluateJavaScript(script)
-        }
+    private func applyAppearanceIfNeeded() {
+        guard let terminalView = hostView?.terminalView else { return }
+        applyAppearance(to: terminalView)
+    }
+
+    private func applyAppearance(to terminalView: TerminalView) {
+        terminalView.nativeBackgroundColor = currentAppearance.backgroundUIColor
+        terminalView.nativeForegroundColor = currentAppearance.foregroundUIColor
+        terminalView.caretColor = currentAppearance.cursorUIColor
+        terminalView.keyboardAppearance = .dark
     }
 
     private func normalized(_ windowSize: TerminalWindowSize) -> TerminalWindowSize {
@@ -480,93 +493,14 @@ final class HermesTerminalSession: ObservableObject, Identifiable {
 
         return error.localizedDescription
     }
-
-    private func ensureWebView() -> WKWebView {
-        if let webView {
-            return webView
-        }
-
-        let userContentController = WKUserContentController()
-        HermesTerminalMessageName.allCases.forEach { name in
-            userContentController.add(messageProxy, name: name.rawValue)
-        }
-
-        let configuration = WKWebViewConfiguration()
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
-        configuration.userContentController = userContentController
-
-        let webView = WKWebView(frame: .zero, configuration: configuration)
-        webView.isOpaque = false
-        webView.backgroundColor = .clear
-        webView.scrollView.backgroundColor = .clear
-        webView.scrollView.isScrollEnabled = false
-        webView.scrollView.bounces = false
-        webView.clipsToBounds = true
-        webView.layer.masksToBounds = true
-        webView.navigationDelegate = messageProxy
-        if #available(iOS 16.4, *) {
-            webView.isInspectable = true
-        }
-
-        loadTerminalPage(into: webView)
-        self.webView = webView
-        return webView
-    }
-
-    private func loadTerminalPage(into webView: WKWebView) {
-        guard
-            let htmlURL = Bundle.module.url(
-                forResource: "terminal",
-                withExtension: "html",
-                subdirectory: "TerminalWeb"
-            )
-        else {
-            return
-        }
-
-        let rootURL = htmlURL.deletingLastPathComponent()
-        webView.loadFileURL(htmlURL, allowingReadAccessTo: rootURL)
-    }
-
-    private func sanitizedTerminalInput(_ data: String) -> String {
-        var sanitized = data
-        sanitized = removingOSCColorReply(code: "10", from: sanitized)
-        sanitized = removingOSCColorReply(code: "11", from: sanitized)
-        sanitized = removingOSCColorReply(code: "12", from: sanitized)
-        return sanitized
-    }
-
-    private func removingOSCColorReply(code: String, from text: String) -> String {
-        let prefix = "\u{1B}]\(code);rgb:"
-        var remaining = text
-
-        while let lowerBound = remaining.range(of: prefix)?.lowerBound {
-            let searchStart = remaining.index(lowerBound, offsetBy: prefix.count)
-
-            if let bellTerminator = remaining[searchStart...].firstIndex(of: "\u{07}") {
-                remaining.removeSubrange(lowerBound...bellTerminator)
-                continue
-            }
-
-            if let escapeIndex = remaining[searchStart...].firstIndex(of: "\u{1B}") {
-                let slashIndex = remaining.index(after: escapeIndex)
-                if slashIndex < remaining.endIndex, remaining[slashIndex] == "\\" {
-                    remaining.removeSubrange(lowerBound...slashIndex)
-                    continue
-                }
-            }
-
-            break
-        }
-
-        return remaining
-    }
 }
 
 @MainActor
 final class HermesTerminalWorkspaceStore: ObservableObject {
     @Published private(set) var sessions: [HermesTerminalSession] = []
     @Published var selectedSessionID: UUID?
+
+    var onChange: (() -> Void)?
 
     var selectedSession: HermesTerminalSession? {
         guard let selectedSessionID else { return nil }
@@ -579,12 +513,20 @@ final class HermesTerminalWorkspaceStore: ObservableObject {
 
     func selectSession(_ sessionID: UUID?) {
         selectedSessionID = sessionID
+        selectedSession?.connectIfNeeded()
+        notifyChange()
     }
 
     func ensureInitialSession(for connection: ConnectionProfile) {
-        if let existing = sessions.last(where: { $0.workspaceScopeFingerprint == connection.workspaceScopeFingerprint }) {
+        if let existing = sessions.last(where: { $0.hostConnectionFingerprint == connection.hostConnectionFingerprint }) {
+            if shouldReplace(existing, for: connection) {
+                closeSession(existing)
+                addSession(for: connection)
+                return
+            }
             selectedSessionID = existing.id
             existing.connectIfNeeded()
+            notifyChange()
         } else {
             addSession(for: connection)
         }
@@ -594,18 +536,25 @@ final class HermesTerminalWorkspaceStore: ObservableObject {
     func addSession(
         for connection: ConnectionProfile,
         startupCommandLine: String? = nil,
-        titleHint: String? = nil
+        titleHint: String? = nil,
+        restoredID: UUID? = nil,
+        connectImmediately: Bool = true
     ) -> HermesTerminalSession {
-        let suffix = sessions.filter { $0.workspaceScopeFingerprint == connection.workspaceScopeFingerprint }.count + 1
+        let suffix = sessions.filter { $0.hostConnectionFingerprint == connection.hostConnectionFingerprint }.count + 1
         let defaultTitle = suffix == 1 ? "Shell" : "Shell \(suffix)"
         let session = HermesTerminalSession(
+            id: restoredID ?? UUID(),
             connection: connection,
             startupCommandLine: startupCommandLine,
             titleHint: titleHint ?? defaultTitle
         )
+        observe(session)
         sessions.append(session)
         selectedSessionID = session.id
-        session.connectIfNeeded()
+        if connectImmediately {
+            session.connectIfNeeded()
+        }
+        notifyChange()
         return session
     }
 
@@ -615,6 +564,7 @@ final class HermesTerminalWorkspaceStore: ObservableObject {
         }
         sessions.removeAll { $0.id == session.id }
         session.close()
+        notifyChange()
     }
 
     func closeSessions(forConnectionID connectionID: UUID) {
@@ -625,29 +575,254 @@ final class HermesTerminalWorkspaceStore: ObservableObject {
         }
         sessions.removeAll { $0.connection.id == connectionID }
         removed.forEach { $0.close() }
+        notifyChange()
+    }
+
+    func snapshot() -> PersistedTerminalWorkspace? {
+        guard !sessions.isEmpty else { return nil }
+        return PersistedTerminalWorkspace(
+            selectedSessionID: selectedSessionID,
+            sessions: sessions.map(\.snapshot)
+        )
+    }
+
+    func restore(
+        from snapshot: PersistedTerminalWorkspace?,
+        availableConnections: [ConnectionProfile]
+    ) {
+        sessions.forEach { $0.close() }
+        sessions = []
+        selectedSessionID = nil
+
+        guard let snapshot else { return }
+
+        for persistedSession in snapshot.sessions {
+            guard let connection = resolvedConnection(
+                for: persistedSession.connection,
+                startupCommandLine: persistedSession.startupCommandLine,
+                availableConnections: availableConnections
+            ) else {
+                continue
+            }
+
+            _ = addSession(
+                for: connection,
+                startupCommandLine: persistedSession.startupCommandLine,
+                titleHint: persistedSession.titleHint,
+                restoredID: persistedSession.id,
+                connectImmediately: false
+            )
+        }
+
+        if let restoredSelection = snapshot.selectedSessionID,
+           sessions.contains(where: { $0.id == restoredSelection }) {
+            selectedSessionID = restoredSelection
+        } else {
+            selectedSessionID = sessions.first?.id
+        }
+        notifyChange()
+    }
+
+    private func observe(_ session: HermesTerminalSession) {
+        session.onSnapshotChange = { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.notifyChange()
+            }
+        }
+    }
+
+    private func notifyChange() {
+        onChange?()
+    }
+
+    private func resolvedConnection(
+        for persistedConnection: ConnectionProfile,
+        startupCommandLine: String?,
+        availableConnections: [ConnectionProfile]
+    ) -> ConnectionProfile? {
+        guard let currentConnection = availableConnections.first(where: { $0.id == persistedConnection.id }) else {
+            return nil
+        }
+
+        if startupCommandLine == nil {
+            return currentConnection.updated()
+        }
+
+        var merged = currentConnection
+        merged.hermesProfile = persistedConnection.hermesProfile
+        merged.customHermesHomePath = persistedConnection.customHermesHomePath
+        return merged.updated()
+    }
+
+    private func shouldReplace(_ existing: HermesTerminalSession, for connection: ConnectionProfile) -> Bool {
+        guard existing.startupCommandLine == nil else { return false }
+        return existing.connection.workspaceScopeFingerprint != connection.workspaceScopeFingerprint ||
+            existing.connection.hermesProfile != connection.hermesProfile ||
+            existing.connection.customHermesHomePath != connection.customHermesHomePath
     }
 }
 
-private enum HermesTerminalMessageName: String, CaseIterable {
-    case ready = "terminalReady"
-    case input = "terminalInput"
-    case binary = "terminalBinary"
-    case resize = "terminalResize"
+private final class HermesTerminalBridge: NSObject, TerminalViewDelegate {
+    weak var session: HermesTerminalSession?
+
+    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+        Task { @MainActor [weak session] in
+            session?.handleTerminalSizeChange(cols: newCols, rows: newRows, in: source)
+        }
+    }
+
+    func setTerminalTitle(source: TerminalView, title: String) {
+        Task { @MainActor [weak session] in
+            session?.updateDisplayTitle(title)
+        }
+    }
+
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+
+    func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        Task { @MainActor [weak session] in
+            session?.sendTerminalInput(data)
+        }
+    }
+
+    func scrolled(source: TerminalView, position: Double) {}
+
+    func requestOpenLink(source: TerminalView, link: String, params: [String : String]) {
+        Task { @MainActor [weak session] in
+            session?.openLink(link)
+        }
+    }
+
+    func bell(source: TerminalView) {}
+
+    func clipboardCopy(source: TerminalView, content: Data) {
+        Task { @MainActor [weak session] in
+            session?.copyToClipboard(content)
+        }
+    }
+
+    func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
+
+    func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+}
+
+final class HermesNativeTerminalHostView: UIView {
+    let terminalView = TerminalView(frame: .zero)
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+
+    func refreshLayout() {
+        setNeedsLayout()
+        layoutIfNeeded()
+        terminalView.setNeedsLayout()
+        terminalView.layoutIfNeeded()
+    }
+
+    func scrollToBottom() {
+        let bottomOffsetY = max(-terminalView.adjustedContentInset.top, terminalView.contentSize.height - terminalView.bounds.height + terminalView.adjustedContentInset.bottom)
+        terminalView.setContentOffset(CGPoint(x: -terminalView.adjustedContentInset.left, y: bottomOffsetY), animated: false)
+    }
+
+    func scrollToBottomIfNearEnd() {
+        let maxOffsetY = max(-terminalView.adjustedContentInset.top, terminalView.contentSize.height - terminalView.bounds.height + terminalView.adjustedContentInset.bottom)
+        let distanceFromBottom = maxOffsetY - terminalView.contentOffset.y
+        if distanceFromBottom < 160 {
+            scrollToBottom()
+        }
+    }
+
+    func dismissKeyboard() {
+        terminalView.resignFirstResponder()
+        terminalView.endEditing(true)
+        window?.endEditing(true)
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
+    func feed(byteArray: [UInt8]) {
+        guard !byteArray.isEmpty else { return }
+        terminalView.feed(byteArray: byteArray[...])
+        scrollToBottomIfNearEnd()
+    }
+
+    private func setup() {
+        backgroundColor = .clear
+        clipsToBounds = true
+
+        terminalView.translatesAutoresizingMaskIntoConstraints = false
+        terminalView.optionAsMetaKey = true
+        terminalView.keyboardAppearance = .dark
+        terminalView.font = UIFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        terminalView.nativeBackgroundColor = .black
+        terminalView.nativeForegroundColor = .white
+        terminalView.caretColor = .white
+        terminalView.inputAccessoryView = UIView(frame: .zero)
+        addSubview(terminalView)
+
+        NSLayoutConstraint.activate([
+            terminalView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            terminalView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            terminalView.topAnchor.constraint(equalTo: topAnchor),
+            terminalView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+
+        try? terminalView.setUseMetal(true)
+    }
 }
 
 final class TerminalContainerView: UIView {
     var onBoundsChange: (() -> Void)?
+
+    private weak var hostedView: UIView?
+    private var hostedConstraints: [NSLayoutConstraint] = []
     private var lastBounds: CGRect = .zero
 
-    func embed(webView: WKWebView) {
-        addSubview(webView)
-        webView.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            webView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            webView.topAnchor.constraint(equalTo: topAnchor),
-            webView.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        backgroundColor = .clear
+    }
+
+    func mount(_ view: UIView) {
+        if hostedView === view, view.superview === self {
+            return
+        }
+
+        unmountHostedView()
+        if let previousContainer = view.superview as? TerminalContainerView,
+           previousContainer !== self {
+            previousContainer.releaseHostedViewReference(ifMatching: view)
+        }
+        view.removeFromSuperview()
+        addSubview(view)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        let constraints = [
+            view.leadingAnchor.constraint(equalTo: leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: trailingAnchor),
+            view.topAnchor.constraint(equalTo: topAnchor),
+            view.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ]
+        NSLayoutConstraint.activate(constraints)
+        hostedConstraints = constraints
+        hostedView = view
+    }
+
+    func unmountHostedView() {
+        NSLayoutConstraint.deactivate(hostedConstraints)
+        hostedConstraints.removeAll()
+        hostedView?.removeFromSuperview()
+        hostedView = nil
     }
 
     override func layoutSubviews() {
@@ -656,6 +831,13 @@ final class TerminalContainerView: UIView {
         guard bounds.integral != lastBounds.integral else { return }
         lastBounds = bounds.integral
         onBoundsChange?()
+    }
+
+    private func releaseHostedViewReference(ifMatching view: UIView) {
+        guard hostedView === view else { return }
+        NSLayoutConstraint.deactivate(hostedConstraints)
+        hostedConstraints.removeAll()
+        hostedView = nil
     }
 }
 
@@ -682,64 +864,9 @@ struct HermesTerminalRepresentable: UIViewRepresentable {
         session.refreshLayout()
         session.connectIfNeeded()
     }
-}
 
-final class TerminalMessageProxy: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
-    weak var session: HermesTerminalSession?
-
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        guard let session, let container = webView.superview as? TerminalContainerView else { return }
-        session.attach(to: container)
-    }
-
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        session?.terminalContentDidStartLoading()
-    }
-
-    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let session else { return }
-        switch HermesTerminalMessageName(rawValue: message.name) {
-        case .ready:
-            if let payload = message.body as? [String: Any] {
-                session.terminalDidBecomeReady(windowSize: windowSize(from: payload))
-            }
-        case .resize:
-            if let payload = message.body as? [String: Any] {
-                session.terminalDidResize(windowSize: windowSize(from: payload))
-            }
-        case .input:
-            if let payload = message.body as? [String: Any], let data = payload["data"] as? String {
-                session.terminalDidReceiveInput(data)
-            }
-        case .binary:
-            if let payload = message.body as? [String: Any], let data = payload["data"] as? String {
-                session.terminalDidReceiveBinary(data)
-            }
-        case nil:
-            break
-        }
-    }
-
-    private func windowSize(from payload: [String: Any]) -> TerminalWindowSize {
-        TerminalWindowSize(
-            cols: number(payload["cols"], fallback: TerminalWindowSize.fallback.cols),
-            rows: number(payload["rows"], fallback: TerminalWindowSize.fallback.rows),
-            pixelWidth: number(payload["pixelWidth"], fallback: TerminalWindowSize.fallback.pixelWidth),
-            pixelHeight: number(payload["pixelHeight"], fallback: TerminalWindowSize.fallback.pixelHeight)
-        )
-    }
-
-    private func number(_ value: Any?, fallback: Int) -> Int {
-        if let intValue = value as? Int {
-            return intValue
-        }
-        if let doubleValue = value as? Double {
-            return Int(doubleValue)
-        }
-        if let numberValue = value as? NSNumber {
-            return numberValue.intValue
-        }
-        return fallback
+    static func dismantleUIView(_ uiView: TerminalContainerView, coordinator: ()) {
+        uiView.unmountHostedView()
     }
 }
 

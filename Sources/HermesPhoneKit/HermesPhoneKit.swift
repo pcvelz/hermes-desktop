@@ -63,6 +63,7 @@ enum SSHTransportError: LocalizedError, Equatable {
 struct PersistenceEnvelope: Codable {
     var activeConnectionID: UUID?
     var connections: [ConnectionProfile]
+    var terminalWorkspace: PersistedTerminalWorkspace?
 }
 
 final class ConnectionSecretsStore {
@@ -180,6 +181,11 @@ final class HermesPhoneStore: ObservableObject {
     private let decoder = JSONDecoder()
 
     init() {
+        terminalWorkspace.onChange = { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.persistConnections()
+            }
+        }
         loadPersistedConnections()
     }
 
@@ -190,6 +196,14 @@ final class HermesPhoneStore: ObservableObject {
 
     var activeWorkspaceScopeFingerprint: String? {
         activeConnection?.workspaceScopeFingerprint
+    }
+
+    var terminalConnection: ConnectionProfile? {
+        activeConnection?.updated()
+    }
+
+    var activeTerminalHostFingerprint: String? {
+        terminalConnection?.hostConnectionFingerprint
     }
 
     var availableProfiles: [RemoteHermesProfile] {
@@ -376,12 +390,12 @@ final class HermesPhoneStore: ObservableObject {
     }
 
     func ensureTerminalConnected() {
-        guard let connection = activeConnection else { return }
+        guard let connection = terminalConnection else { return }
         terminalWorkspace.ensureInitialSession(for: connection)
     }
 
     func openNewTerminalSession() {
-        guard let connection = activeConnection else { return }
+        guard let connection = terminalConnection else { return }
         terminalWorkspace.addSession(for: connection)
     }
 
@@ -515,7 +529,8 @@ final class HermesPhoneStore: ObservableObject {
         do {
             let envelope = PersistenceEnvelope(
                 activeConnectionID: activeConnectionID,
-                connections: connections
+                connections: connections,
+                terminalWorkspace: terminalWorkspace.snapshot()
             )
             let data = try encoder.encode(envelope)
             let url = try persistenceURL()
@@ -537,6 +552,7 @@ final class HermesPhoneStore: ObservableObject {
             let envelope = try decoder.decode(PersistenceEnvelope.self, from: data)
             connections = envelope.connections
             activeConnectionID = envelope.activeConnectionID ?? connections.first?.id
+            terminalWorkspace.restore(from: envelope.terminalWorkspace, availableConnections: connections)
         } catch {
             present(error)
         }
@@ -648,7 +664,7 @@ final class SSHTransport: @unchecked Sendable {
         for connection: ConnectionProfile,
         startupCommandLine: String? = nil
     ) -> String {
-        connection.terminalBootstrapSequence(startupCommandLine: startupCommandLine)
+        connection.remoteShellBootstrapCommand(startupCommandLine: startupCommandLine)
     }
 
     func validateSuccessfulExit(_ result: SSHCommandResult, for connection: ConnectionProfile? = nil) throws {
@@ -1104,7 +1120,6 @@ private struct TerminalScreen: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            terminalProfileRail
             terminalSurface
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.bottom, terminalSurfaceBottomInset)
@@ -1112,19 +1127,28 @@ private struct TerminalScreen: View {
         }
         .padding(.horizontal, 8)
         .padding(.top, 6)
-        .overlay(alignment: .bottom) {
-            if keyboard.isVisible {
-                terminalQuickKeyBar
-                    .padding(.horizontal, 8)
-                    .padding(.top, 6)
-                    .padding(.bottom, keyboard.bottomInset > 0 ? keyboard.bottomInset + 6 : 10)
-                    .background(Color.black.opacity(0.92))
-            }
-        }
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .navigationTitle("Terminal")
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: store.activeWorkspaceScopeFingerprint) {
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Menu {
+                    terminalQuickKeyMenuContent
+                } label: {
+                    Image(systemName: "command")
+                }
+            }
+            if keyboard.isVisible {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        workspace.selectedSession?.dismissKeyboard()
+                    } label: {
+                        Image(systemName: "keyboard.chevron.compact.down")
+                    }
+                }
+            }
+        }
+        .task(id: store.activeTerminalHostFingerprint) {
             await store.refreshOverview()
             store.ensureTerminalConnected()
         }
@@ -1132,11 +1156,15 @@ private struct TerminalScreen: View {
             guard let session = workspace.selectedSession else { return }
             session.refreshLayout()
             if keyboard.isVisible {
+                session.focusInput()
                 session.ensurePromptVisible()
-                try? await Task.sleep(nanoseconds: 180_000_000)
-                session.refreshLayout()
-                session.ensurePromptVisible()
-                try? await Task.sleep(nanoseconds: 240_000_000)
+            }
+        }
+        .task(id: workspace.selectedSessionID) {
+            guard let session = workspace.selectedSession else { return }
+            session.connectIfNeeded()
+            if keyboard.isVisible {
+                session.focusInput()
                 session.ensurePromptVisible()
             }
         }
@@ -1156,42 +1184,9 @@ private struct TerminalScreen: View {
         )
     }
 
-    private var terminalQuickKeyBarReservedHeight: CGFloat {
-        78
-    }
-
     private var terminalSurfaceBottomInset: CGFloat {
         guard keyboard.isVisible else { return 0 }
-        return keyboard.bottomInset + terminalQuickKeyBarReservedHeight + 12
-    }
-
-    private var terminalProfileRail: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(store.availableProfiles) { profile in
-                    Button {
-                        Task { await store.switchHermesProfile(to: profile.name) }
-                    } label: {
-                        HStack(spacing: 6) {
-                            if profile.name == store.activeConnection?.resolvedHermesProfileName {
-                                Circle()
-                                    .fill(Color.green)
-                                    .frame(width: 6, height: 6)
-                            }
-                            Text(profile.name)
-                                .lineLimit(1)
-                        }
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(profileBackground(for: profile), in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(store.isBusy || store.isLoadingOverview)
-                }
-            }
-            .padding(.horizontal, 2)
-        }
+        return keyboard.bottomInset + 12
     }
 
     private var terminalSurface: some View {
@@ -1208,7 +1203,7 @@ private struct TerminalScreen: View {
                     ContentUnavailableView(
                         "No Session",
                         systemImage: "terminal",
-                        description: Text("Create a shell for the active profile and keep it alive while you move around the app.")
+                        description: Text("Open a host shell and keep it alive while you move around the app.")
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -1237,7 +1232,6 @@ private struct TerminalScreen: View {
                             TerminalSessionChip(
                                 session: session,
                                 isSelected: workspace.selectedSessionID == session.id,
-                                isCurrentWorkspace: session.workspaceScopeFingerprint == store.activeWorkspaceScopeFingerprint,
                                 onSelect: {
                                     workspace.selectSession(session.id)
                                 },
@@ -1265,7 +1259,7 @@ private struct TerminalScreen: View {
                     Section {
                         Label(session.connection.label, systemImage: "server.rack")
                         Label(session.connection.displayDestination, systemImage: "network")
-                        Label(session.profileName, systemImage: "person.text.rectangle")
+                        Label(session.contextLabel, systemImage: "terminal")
                     }
 
                     Section("Session") {
@@ -1302,47 +1296,36 @@ private struct TerminalScreen: View {
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(Color.white.opacity(0.06))
-        )
+            )
     }
 
-    private var terminalQuickKeyBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(TerminalQuickKey.allCases) { key in
-                    Button(key.title) {
-                        workspace.selectedSession?.sendQuickKey(key)
-                    }
-                    .font(.footnote.weight(.semibold))
-                    .buttonStyle(.bordered)
-                    .tint(Color.white.opacity(0.2))
+    @ViewBuilder
+    private var terminalQuickKeyMenuContent: some View {
+        Section("Control") {
+            ForEach([TerminalQuickKey.escape, .tab, .ctrlC, .ctrlD]) { key in
+                Button(key.title) {
+                    workspace.selectedSession?.sendQuickKey(key)
                 }
-
-                Button {
-                    workspace.selectedSession?.dismissKeyboard()
-                } label: {
-                    Image(systemName: "keyboard.chevron.compact.down")
-                        .font(.footnote.weight(.semibold))
-                }
-                .buttonStyle(.bordered)
-                .tint(Color.white.opacity(0.2))
             }
-            .padding(.horizontal, 2)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.white.opacity(0.08))
-        )
+
+        Section("Navigation") {
+            ForEach([TerminalQuickKey.up, .down, .left, .right]) { key in
+                Button(key.title) {
+                    workspace.selectedSession?.sendQuickKey(key)
+                }
+            }
+        }
+
+        Section("Symbols") {
+            ForEach([TerminalQuickKey.pipe, .slash, .dash]) { key in
+                Button(key.title) {
+                    workspace.selectedSession?.sendQuickKey(key)
+                }
+            }
+        }
     }
 
-    private func profileBackground(for profile: RemoteHermesProfile) -> Color {
-        if profile.name == store.activeConnection?.resolvedHermesProfileName {
-            return Color(red: 0.12, green: 0.36, blue: 0.31)
-        }
-        return Color.white.opacity(0.06)
-    }
 }
 
 private struct TerminalAppearanceSheet: View {
@@ -1420,7 +1403,6 @@ private struct TerminalAppearanceSheet: View {
 private struct TerminalSessionChip: View {
     @ObservedObject var session: HermesTerminalSession
     let isSelected: Bool
-    let isCurrentWorkspace: Bool
     let onSelect: () -> Void
     let onClose: () -> Void
 
@@ -1438,16 +1420,10 @@ private struct TerminalSessionChip: View {
                         if session.isConnecting {
                             ProgressView()
                                 .controlSize(.mini)
-                        } else if !isCurrentWorkspace {
-                            Text("Other")
-                                .font(.caption2.weight(.semibold))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.orange.opacity(0.18), in: Capsule())
                         }
                     }
 
-                    Text(session.profileName)
+                    Text(session.chipSubtitle)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -1475,16 +1451,10 @@ private struct TerminalSessionChip: View {
     }
 
     private var backgroundColor: Color {
-        if !isCurrentWorkspace {
-            return isSelected ? Color.orange.opacity(0.22) : Color.orange.opacity(0.12)
-        }
         return isSelected ? Color.white.opacity(0.12) : Color.white.opacity(0.06)
     }
 
     private var borderColor: Color {
-        if !isCurrentWorkspace {
-            return Color.orange.opacity(isSelected ? 0.5 : 0.22)
-        }
         return Color.white.opacity(isSelected ? 0.18 : 0.08)
     }
 }
@@ -2052,6 +2022,23 @@ private struct ConnectionDraft {
             passphrase: passphrase.nilIfBlank
         )
     }
+
+    var trimmedHermesProfile: String? {
+        guard let value = hermesProfile.nilIfBlank else { return nil }
+        guard value.caseInsensitiveCompare("default") != .orderedSame else { return nil }
+        return value
+    }
+
+    var trimmedCustomHermesHomePath: String? {
+        guard var value = customHermesHomePath.nilIfBlank else { return nil }
+        if value == "~/" {
+            return "~"
+        }
+        while value.count > 1, value.hasSuffix("/") {
+            value.removeLast()
+        }
+        return value
+    }
 }
 
 private struct ConnectionEditorView: View {
@@ -2083,6 +2070,24 @@ private struct ConnectionEditorView: View {
                 TextField("Custom Hermes Home (optional)", text: $draft.customHermesHomePath)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+
+                Text("Standard remote layout: Hermes lives in ~/.hermes, or in ~/.hermes/profiles/<name> when you choose a profile.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                if let customHermesHomePath = draft.trimmedCustomHermesHomePath {
+                    Text("Custom Hermes Home override: \(customHermesHomePath). HermesPhone will use this path as HERMES_HOME for Terminal and app-driven Hermes actions.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else if let hermesProfile = draft.trimmedHermesProfile {
+                    Text("Resolved profile path: ~/.hermes/profiles/\(hermesProfile). The default Terminal shell stays host-level and auto-detects the Hermes install from the standard layout.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("The default Terminal shell auto-detects Hermes from the standard layout, checking ~/.hermes first and falling back to default or available profiles when needed.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("Authentication") {

@@ -27,12 +27,10 @@ let package = Package(
         .target(
             name: "HermesPhoneKit",
             dependencies: [
-                "Citadel"
+                "Citadel",
+                .product(name: "SwiftTerm", package: "SwiftTerm")
             ],
-            path: "Sources/HermesPhoneKit",
-            resources: [
-                .copy("Resources/TerminalWeb")
-            ]
+            path: "Sources/HermesPhoneKit"
         ),
         .executableTarget(
             name: "HermesDesktop",

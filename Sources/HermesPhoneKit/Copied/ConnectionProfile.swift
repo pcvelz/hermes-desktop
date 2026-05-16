@@ -204,15 +204,6 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
         return "exec /bin/sh -c \"\(innerCommand.escapedForOuterDoubleQuotedShellCommand)\""
     }
 
-    func terminalBootstrapSequence(startupCommandLine: String? = nil) -> String {
-        var commands = [remoteServiceEnvironmentExports]
-        if let startupCommandLine,
-           !startupCommandLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            commands.append(startupCommandLine)
-        }
-        return commands.joined(separator: "; ")
-    }
-
     var workspaceScopeFingerprint: String {
         [
             effectiveTarget,
