@@ -1476,7 +1476,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 #if canImport(MetalKit)
             if useMetalRenderer, metalView != nil {
                 requestMetalDisplay()
+            } else {
+                setNeedsDisplay(bounds)
             }
+#else
+            setNeedsDisplay(bounds)
 #endif
         }
     }

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no"
+  >
+  <title>Hermes Terminal</title>
+  <link rel="stylesheet" href="xterm.css">
+  <style>
+    :root {
+      color-scheme: dark;
+      --terminal-background: #09111a;
+      --terminal-foreground: #edf1f7;
+      --terminal-selection: rgba(90, 191, 166, 0.28);
+      --terminal-cursor: #57d7be;
+      --terminal-black: #09111a;
+      --terminal-red: #ff6b7d;
+      --terminal-green: #5fd78d;
+      --terminal-yellow: #f5d76e;
+      --terminal-blue: #7ab6ff;
+      --terminal-magenta: #c08bff;
+      --terminal-cyan: #63d7df;
+      --terminal-white: #edf1f7;
+      --terminal-bright-black: #5a6777;
+      --terminal-bright-red: #ff8f9d;
+      --terminal-bright-green: #7ef0a9;
+      --terminal-bright-yellow: #ffe58b;
+      --terminal-bright-blue: #99cbff;
+      --terminal-bright-magenta: #d8b2ff;
+      --terminal-bright-cyan: #8be8ef;
+      --terminal-bright-white: #ffffff;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--terminal-background);
+    }
+
+    body {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    #terminal-root {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+      background: var(--terminal-background);
+    }
+
+    #terminal-surface {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--terminal-background);
+    }
+
+    #terminal-surface .xterm {
+      width: 100%;
+      height: 100%;
+      padding: 12px 14px;
+      box-sizing: border-box;
+      background: var(--terminal-background);
+      -webkit-user-select: text;
+      user-select: text;
+      -webkit-touch-callout: none;
+      touch-action: pan-y pan-x;
+    }
+
+    #terminal-surface .xterm-viewport {
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+
+    #terminal-surface .xterm-viewport::-webkit-scrollbar {
+      display: none;
+    }
+
+  </style>
+</head>
+<body>
+  <div id="terminal-root">
+    <div id="terminal-surface"></div>
+  </div>
+  <script src="xterm.js"></script>
+  <script src="addon-fit.js"></script>
+  <script src="terminal-bridge.js"></script>
+</body>
+</html>

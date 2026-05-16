@@ -6,18 +6,34 @@ let package = Package(
     name: "HermesDesktop",
     defaultLocalization: "en",
     platforms: [
-        .macOS(.v14)
+        .macOS(.v14),
+        .iOS(.v17)
     ],
     products: [
+        .library(
+            name: "HermesPhoneKit",
+            targets: ["HermesPhoneKit"]
+        ),
         .executable(
             name: "HermesDesktop",
             targets: ["HermesDesktop"]
         )
     ],
     dependencies: [
+        .package(url: "https://github.com/orlandos-nl/Citadel.git", from: "0.12.1"),
         .package(path: "Vendor/SwiftTerm")
     ],
     targets: [
+        .target(
+            name: "HermesPhoneKit",
+            dependencies: [
+                "Citadel"
+            ],
+            path: "Sources/HermesPhoneKit",
+            resources: [
+                .copy("Resources/TerminalWeb")
+            ]
+        ),
         .executableTarget(
             name: "HermesDesktop",
             dependencies: [
