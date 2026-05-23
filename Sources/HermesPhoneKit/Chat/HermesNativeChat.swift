@@ -164,6 +164,7 @@ final class HermesNativeChatStore: ObservableObject {
     @Published var gatewayInfo: [String: String] = [:]
     @Published var isCheckingBootstrap = false
     @Published var isConnecting = false
+    @Published var isPreparingSession = false
     @Published var isPerformingRequest = false
     @Published var isResumingSession = false
     @Published private(set) var pendingResumeTitle: String?
@@ -177,6 +178,8 @@ final class HermesNativeChatStore: ObservableObject {
     private var activeConnectionFingerprint: String?
     private var currentAssistantMessageID: UUID?
     private var pendingResumeSession: SessionSummary?
+    private var isCreatingSession = false
+    private var conversationGeneration = 0
 
     init(phoneStore: HermesPhoneStore, sshTransport: SSHTransport) {
         self.phoneStore = phoneStore
@@ -233,6 +236,9 @@ final class HermesNativeChatStore: ObservableObject {
         if !promptCards.isEmpty {
             return "Needs input"
         }
+        if isPreparingSession {
+            return "Preparing"
+        }
         if isPerformingRequest || messages.contains(where: \.isStreaming) || latestToolCard?.isRunning == true {
             return "Working"
         }
@@ -288,8 +294,9 @@ final class HermesNativeChatStore: ObservableObject {
     }
 
     func prepareNewChatReplacingActiveConversation() async {
-        await closeActiveConversationIfNeeded()
+        await closeActiveConversationIfNeeded(keepingGatewayWarm: true)
         prepareNewChat()
+        await prepareSessionForNewChat()
     }
 
     func syncWithActiveConnection() async {
@@ -354,14 +361,25 @@ final class HermesNativeChatStore: ObservableObject {
     }
 
     private func createSession() async {
-        guard let session = gatewaySession else {
-            await ensureGatewaySession()
-            guard let session = gatewaySession else { return }
-            await createSession(using: session)
-            return
-        }
+        await ensureCurrentChatSession(clearsConversationBeforeCreate: !hasConversationContent)
+    }
 
-        await createSession(using: session)
+    @discardableResult
+    private func ensureCurrentChatSession(clearsConversationBeforeCreate: Bool) async -> Bool {
+        await ensureGatewaySession()
+        guard let session = gatewaySession else { return false }
+        if currentSessionID != nil { return true }
+
+        await createSession(
+            using: session,
+            clearsConversationBeforeCreate: clearsConversationBeforeCreate
+        )
+        return currentSessionID != nil
+    }
+
+    private func prepareSessionForNewChat() async {
+        guard !isResumingSession else { return }
+        await ensureCurrentChatSession(clearsConversationBeforeCreate: !hasConversationContent)
     }
 
     @discardableResult
@@ -448,7 +466,7 @@ final class HermesNativeChatStore: ObservableObject {
             return
         }
 
-        await closeActiveConversationIfNeeded()
+        await closeActiveConversationIfNeeded(keepingGatewayWarm: true)
         queueResumeSession(summary)
     }
 
@@ -462,20 +480,17 @@ final class HermesNativeChatStore: ObservableObject {
         guard !message.isEmpty else { return }
         guard !isResumingSession else { return }
 
-        await ensureGatewaySession()
-        if currentSessionID == nil {
-            await createSession()
-        }
-        guard let session = gatewaySession, let currentSessionID else { return }
-
         draftMessage = ""
         messages.append(HermesChatMessage(role: .user, text: message))
+        sessionStatus = currentSessionID == nil ? "Preparing chat session..." : "Sending prompt..."
+        isPerformingRequest = true
+        defer { isPerformingRequest = false }
+
+        await ensureCurrentChatSession(clearsConversationBeforeCreate: false)
+        guard let session = gatewaySession, let currentSessionID else { return }
         sessionStatus = "Sending prompt..."
 
         do {
-            isPerformingRequest = true
-            defer { isPerformingRequest = false }
-
             _ = try await session.request(
                 method: "prompt.submit",
                 params: [
@@ -512,7 +527,7 @@ final class HermesNativeChatStore: ObservableObject {
         }
     }
 
-    func closeChat(clearsConversation: Bool = true) async {
+    func closeChat(clearsConversation: Bool = true, disconnectsGateway: Bool = true) async {
         if let session = gatewaySession, let currentSessionID {
             do {
                 _ = try await session.request(
@@ -525,7 +540,14 @@ final class HermesNativeChatStore: ObservableObject {
             }
         }
 
-        await disconnectFromGateway(resetMessages: false)
+        if disconnectsGateway {
+            await disconnectFromGateway(resetMessages: false)
+        } else {
+            currentSessionID = nil
+            currentAssistantMessageID = nil
+            connectionStatus = gatewaySession == nil ? "Idle" : "Gateway connected"
+        }
+
         if clearsConversation {
             clearConversationState(keepDiagnostics: true)
         } else {
@@ -600,8 +622,29 @@ final class HermesNativeChatStore: ObservableObject {
         }
     }
 
-    private func createSession(using session: HermesGatewaySSHSession) async {
-        clearConversationState(keepDiagnostics: true)
+    private func createSession(
+        using session: HermesGatewaySSHSession,
+        clearsConversationBeforeCreate: Bool
+    ) async {
+        if isCreatingSession {
+            sessionStatus = "Preparing chat session..."
+            await waitForSessionCreation()
+            return
+        }
+
+        isCreatingSession = true
+        isPreparingSession = true
+        defer {
+            isCreatingSession = false
+            isPreparingSession = false
+        }
+
+        if clearsConversationBeforeCreate {
+            clearConversationState(keepDiagnostics: true)
+        }
+
+        let requestedFingerprint = phoneStore?.activeWorkspaceScopeFingerprint
+        let requestedGeneration = conversationGeneration
         sessionStatus = "Creating chat session..."
 
         do {
@@ -614,6 +657,11 @@ final class HermesNativeChatStore: ObservableObject {
                 ],
                 timeout: 60
             )
+            guard phoneStore?.activeWorkspaceScopeFingerprint == requestedFingerprint,
+                  gatewaySession === session,
+                  conversationGeneration == requestedGeneration else {
+                return
+            }
             applySessionResult(result, preferredSessionID: nil)
             sessionStatus = "Chat session ready"
         } catch {
@@ -686,6 +734,12 @@ final class HermesNativeChatStore: ObservableObject {
         }
     }
 
+    private func waitForSessionCreation() async {
+        while isCreatingSession {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+    }
+
     private func disconnectFromGateway(resetMessages: Bool) async {
         eventTask?.cancel()
         eventTask = nil
@@ -702,14 +756,15 @@ final class HermesNativeChatStore: ObservableObject {
         connectionStatus = "Idle"
     }
 
-    private func closeActiveConversationIfNeeded() async {
+    private func closeActiveConversationIfNeeded(keepingGatewayWarm: Bool = false) async {
         guard gatewaySession != nil || hasConversationContent else { return }
         isResumingSession = true
         sessionStatus = "Closing background chat..."
-        await closeChat()
+        await closeChat(disconnectsGateway: !keepingGatewayWarm)
     }
 
     private func clearConversationState(keepDiagnostics: Bool) {
+        conversationGeneration += 1
         currentSessionID = nil
         currentAssistantMessageID = nil
         messages = []
@@ -1091,13 +1146,14 @@ struct NativeChatScreen: View {
     @ObservedObject var chatStore: HermesNativeChatStore
     @StateObject private var keyboard = KeyboardObserver()
     @State private var dismissedLatestToolActivityID: String?
+    @State private var isToolTickerExpanded = false
     @State private var isAwayFromBottom = false
     @State private var scrollMetrics = NativeChatScrollMetrics()
     @State private var bottomControlsHeight: CGFloat = 0
     private let bottomAnchorID = "native-chat-bottom-anchor"
     private let bottomDistanceThreshold: CGFloat = 72
     private let scrollToBottomButtonSize: CGFloat = 38
-    private let scrollToBottomButtonGap: CGFloat = 12
+    private let scrollToBottomButtonGap: CGFloat = 112
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -1128,6 +1184,7 @@ struct NativeChatScreen: View {
             }
             .onChange(of: chatStore.currentSessionID) { _, _ in
                 dismissedLatestToolActivityID = nil
+                isToolTickerExpanded = false
                 scrollToBottom(using: proxy, animated: false)
             }
             .onChange(of: keyboard.bottomInset) { _, newInset in
@@ -1139,6 +1196,7 @@ struct NativeChatScreen: View {
                 NativeChatBottomControls(
                     chatStore: chatStore,
                     visibleToolCard: visibleToolCard,
+                    isToolTickerExpanded: $isToolTickerExpanded,
                     skills: store.skills,
                     isLoadingSkills: store.isLoadingSkills,
                     loadSkills: { await store.loadSkills() },
@@ -1161,6 +1219,7 @@ struct NativeChatScreen: View {
         .onChange(of: latestToolActivityID) { _, newValue in
             if newValue.isEmpty {
                 dismissedLatestToolActivityID = nil
+                isToolTickerExpanded = false
             }
         }
         .toolbar {
@@ -1194,7 +1253,7 @@ struct NativeChatScreen: View {
         }
         .task(id: store.activeWorkspaceScopeFingerprint) {
             await chatStore.syncWithActiveConnection()
-            await chatStore.refreshBootstrapStatus(force: true)
+            await chatStore.refreshBootstrapStatus()
         }
         .task(id: chatStore.pendingResumeRequestID) {
             await chatStore.performPendingResumeIfNeeded()
@@ -1316,6 +1375,7 @@ struct NativeChatScreen: View {
     private func dismissToolTicker(_ card: HermesChatToolCard) {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.88)) {
             dismissedLatestToolActivityID = "\(card.id)-\(card.updatedAt.timeIntervalSinceReferenceDate)"
+            isToolTickerExpanded = false
         }
     }
 
@@ -1423,6 +1483,7 @@ private struct NativeChatMessagesView: View {
 private struct NativeChatBottomControls: View {
     @ObservedObject var chatStore: HermesNativeChatStore
     let visibleToolCard: HermesChatToolCard?
+    @Binding var isToolTickerExpanded: Bool
     let skills: [SkillSummary]
     let isLoadingSkills: Bool
     let loadSkills: () async -> Void
@@ -1441,7 +1502,7 @@ private struct NativeChatBottomControls: View {
     private var controls: some View {
         VStack(spacing: 8) {
             if let visibleToolCard {
-                ToolActivityTickerView(card: visibleToolCard) {
+                ToolActivityTickerView(card: visibleToolCard, isExpanded: $isToolTickerExpanded) {
                     onDismissToolTicker(visibleToolCard)
                 }
                 .id("\(visibleToolCard.id)-\(visibleToolCard.updatedAt.timeIntervalSinceReferenceDate)")
@@ -1944,7 +2005,7 @@ private struct ChatComposerView: View {
     }
 
     private var canEdit: Bool {
-        !chatStore.isConnecting && !chatStore.isResumingSession && !chatStore.isCheckingBootstrap
+        !chatStore.isResumingSession && !chatStore.isCheckingBootstrap
     }
 
     private var canSend: Bool {
@@ -1957,6 +2018,9 @@ private struct ChatComposerView: View {
         }
         if chatStore.isConnecting {
             return "Connecting to Hermes…"
+        }
+        if chatStore.isPreparingSession {
+            return "Preparing chat…"
         }
         if chatStore.isResumingSession {
             return "Loading conversation…"
@@ -2106,9 +2170,15 @@ private struct ChatBubble: View {
 
 private struct ToolActivityTickerView: View {
     let card: HermesChatToolCard
+    @Binding var isExpanded: Bool
     let onDismiss: () -> Void
     @State private var dragOffset: CGFloat = 0
-    @State private var isExpanded = false
+    @State private var isTouchTracking = false
+    @State private var hasCancelledPressExpansion = false
+    @State private var pressExpansionTask: Task<Void, Never>?
+
+    private static let expansionDelayNanoseconds: UInt64 = 650_000_000
+    private static let expansionMovementTolerance: CGFloat = 18
 
     var body: some View {
         HStack(spacing: 12) {
@@ -2154,11 +2224,18 @@ private struct ToolActivityTickerView: View {
         )
         .offset(x: dragOffset)
         .gesture(
-            DragGesture(minimumDistance: 12)
+            DragGesture(minimumDistance: 0)
                 .onChanged { value in
+                    if !isTouchTracking {
+                        beginTickerPress()
+                    }
                     dragOffset = max(0, value.translation.width)
+                    if shouldCancelPressExpansion(for: value.translation) {
+                        cancelPendingPressExpansion()
+                    }
                 }
                 .onEnded { value in
+                    endTickerPress()
                     if value.translation.width > 90 {
                         withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
                             dragOffset = 220
@@ -2174,11 +2251,9 @@ private struct ToolActivityTickerView: View {
                     }
                 }
         )
-        .onLongPressGesture(minimumDuration: 0.25, maximumDistance: 18, pressing: { pressing in
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.86)) {
-                isExpanded = pressing
-            }
-        }, perform: {})
+        .onDisappear {
+            pressExpansionTask?.cancel()
+        }
         .overlay(alignment: .trailing) {
             if dragOffset > 18 {
                 Image(systemName: "xmark")
@@ -2187,6 +2262,44 @@ private struct ToolActivityTickerView: View {
                     .padding(.trailing, 14)
             }
         }
+    }
+
+    private func beginTickerPress() {
+        isTouchTracking = true
+        hasCancelledPressExpansion = false
+        pressExpansionTask?.cancel()
+        pressExpansionTask = Task {
+            try? await Task.sleep(nanoseconds: Self.expansionDelayNanoseconds)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard isTouchTracking,
+                      !hasCancelledPressExpansion,
+                      dragOffset <= Self.expansionMovementTolerance else { return }
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.86)) {
+                    isExpanded = true
+                }
+            }
+        }
+    }
+
+    private func endTickerPress() {
+        pressExpansionTask?.cancel()
+        isTouchTracking = false
+        hasCancelledPressExpansion = false
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.86)) {
+            isExpanded = false
+        }
+    }
+
+    private func cancelPendingPressExpansion() {
+        guard !hasCancelledPressExpansion else { return }
+        hasCancelledPressExpansion = true
+        pressExpansionTask?.cancel()
+    }
+
+    private func shouldCancelPressExpansion(for translation: CGSize) -> Bool {
+        abs(translation.width) > Self.expansionMovementTolerance ||
+        abs(translation.height) > Self.expansionMovementTolerance
     }
 
     private var normalizedStatus: String {

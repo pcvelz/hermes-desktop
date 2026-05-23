@@ -156,7 +156,7 @@ struct ChatInboxScreen: View {
         .task(id: store.activeWorkspaceScopeFingerprint) {
             await loadChatInbox()
             await store.nativeChatStore.syncWithActiveConnection()
-            await store.nativeChatStore.refreshBootstrapStatus(force: true)
+            await store.nativeChatStore.refreshBootstrapStatus()
         }
         .refreshable {
             await loadChatInbox(query: query)

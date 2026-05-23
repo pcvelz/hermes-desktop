@@ -62,7 +62,7 @@ struct ConnectionsScreen: View {
         }
         .task(id: store.activeWorkspaceScopeFingerprint) {
             await store.refreshOverview()
-            await store.nativeChatStore.refreshBootstrapStatus(force: true)
+            await store.nativeChatStore.refreshBootstrapStatus()
         }
     }
 
