@@ -14,6 +14,8 @@ final class HermesPhoneStore: ObservableObject {
     @Published var chatNavigationPath: [HermesPhoneChatRoute] = []
     @Published var connections: [ConnectionProfile] = []
     @Published var activeConnectionID: UUID?
+    @Published var activeHostFingerprint: String?
+    @Published var activeProfileNameByHost: [String: String] = [:]
     @Published var overview: RemoteDiscovery?
     @Published var sessions: [SessionSummary] = []
     @Published var sessionsLoadState: SessionListLoadState = .idle
@@ -49,6 +51,7 @@ final class HermesPhoneStore: ObservableObject {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private var currentSessionsLoadID: UUID?
+    private var transcriptCache: [String: [SessionMessage]] = [:]
 
     init() {
         terminalWorkspace.onChange = { [weak self] in
@@ -61,8 +64,25 @@ final class HermesPhoneStore: ObservableObject {
     }
 
     var activeConnection: ConnectionProfile? {
-        guard let activeConnectionID else { return nil }
-        return connections.first(where: { $0.id == activeConnectionID })
+        guard let activeHostFingerprint else { return nil }
+        let hostConnections = connectionsForActiveHost
+        guard !hostConnections.isEmpty else { return nil }
+
+        if let selectedProfileName = activeProfileNameByHost[activeHostFingerprint],
+           let selectedConnection = hostConnections.first(where: { $0.resolvedHermesProfileName == selectedProfileName }) {
+            return selectedConnection
+        }
+
+        if let legacyActiveConnection = connections.first(where: { $0.id == activeConnectionID }),
+           legacyActiveConnection.hostConnectionFingerprint == activeHostFingerprint {
+            return legacyActiveConnection
+        }
+
+        return hostConnections.first(where: \.usesDefaultHermesProfile) ?? hostConnections[0]
+    }
+
+    var activeHostConnections: [ConnectionProfile] {
+        connectionsForActiveHost
     }
 
     var activeWorkspaceScopeFingerprint: String? {
@@ -78,20 +98,39 @@ final class HermesPhoneStore: ObservableObject {
     }
 
     var availableProfiles: [RemoteHermesProfile] {
-        if let overview, !overview.availableProfiles.isEmpty {
-            return overview.availableProfiles
+        let configuredProfiles = activeHostConnections.map {
+            RemoteHermesProfile(
+                name: $0.resolvedHermesProfileName,
+                path: $0.remoteHermesHomePath,
+                isDefault: $0.usesDefaultHermesProfile,
+                exists: true
+            )
         }
-        if let connection = activeConnection {
-            return [
-                RemoteHermesProfile(
-                    name: connection.resolvedHermesProfileName,
-                    path: connection.remoteHermesHomePath,
-                    isDefault: connection.usesDefaultHermesProfile,
-                    exists: true
-                )
-            ]
+
+        if let overview, !overview.availableProfiles.isEmpty {
+            var profiles = overview.availableProfiles
+            for configuredProfile in configuredProfiles
+            where !profiles.contains(where: { $0.name == configuredProfile.name }) {
+                profiles.append(configuredProfile)
+            }
+            return profiles
+        }
+        if !configuredProfiles.isEmpty {
+            return configuredProfiles
         }
         return []
+    }
+
+    private var connectionsForActiveHost: [ConnectionProfile] {
+        guard let activeHostFingerprint else { return [] }
+        return connections
+            .filter { $0.hostConnectionFingerprint == activeHostFingerprint }
+            .sorted { lhs, rhs in
+                if lhs.usesDefaultHermesProfile != rhs.usesDefaultHermesProfile {
+                    return lhs.usesDefaultHermesProfile
+                }
+                return lhs.resolvedHermesProfileName.localizedCaseInsensitiveCompare(rhs.resolvedHermesProfileName) == .orderedAscending
+            }
     }
 
     var canonicalFileReferences: [WorkspaceFileReference] {
@@ -143,8 +182,11 @@ final class HermesPhoneStore: ObservableObject {
         updatedConnections.sort { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
         connections = updatedConnections
         if makeActive {
-            activeConnectionID = normalized.id
+            selectProfileConnection(normalized)
             markSessionsPendingLoadIfNeeded()
+        } else if normalized.hostConnectionFingerprint == activeHostFingerprint,
+                  normalized.resolvedHermesProfileName == activeProfileNameByHost[normalized.hostConnectionFingerprint] {
+            activeConnectionID = normalized.id
         }
 
         do {
@@ -159,8 +201,7 @@ final class HermesPhoneStore: ObservableObject {
         connections.removeAll { $0.id == profile.id }
         secretsStore.delete(for: profile.id)
         terminalWorkspace.closeSessions(forConnectionID: profile.id)
-        if activeConnectionID == profile.id {
-            activeConnectionID = connections.first?.id
+        if activeConnectionID == profile.id || activeHostFingerprint == profile.hostConnectionFingerprint {
             overview = nil
             markSessionsPendingLoadIfNeeded()
             cronJobs = []
@@ -169,15 +210,29 @@ final class HermesPhoneStore: ObservableObject {
             skillsError = nil
             directoryListing = nil
             fileEditor = nil
-            if let activeConnection {
-                activeDirectoryPath = activeConnection.remoteHermesHomePath
+            activeProfileNameByHost[profile.hostConnectionFingerprint] = nil
+            if connections.contains(where: { $0.hostConnectionFingerprint == profile.hostConnectionFingerprint }) {
+                let replacement = connections
+                    .filter { $0.hostConnectionFingerprint == profile.hostConnectionFingerprint }
+                    .sorted { $0.resolvedHermesProfileName.localizedCaseInsensitiveCompare($1.resolvedHermesProfileName) == .orderedAscending }
+                    .first
+                if let replacement {
+                    selectProfileConnection(replacement)
+                    activeDirectoryPath = replacement.remoteHermesHomePath
+                }
+            } else if let first = connections.first {
+                selectProfileConnection(first)
+                activeDirectoryPath = first.remoteHermesHomePath
+            } else {
+                activeConnectionID = nil
+                activeHostFingerprint = nil
             }
         }
         persistConnections()
     }
 
     func activateConnection(_ profile: ConnectionProfile) {
-        activeConnectionID = profile.id
+        selectProfileConnection(profile)
         markSessionsPendingLoadIfNeeded()
         cronJobs = []
         skills = []
@@ -190,28 +245,51 @@ final class HermesPhoneStore: ObservableObject {
         persistConnections()
     }
 
+    func activateHost(_ hostFingerprint: String) {
+        guard let connection = connectionForHost(fingerprint: hostFingerprint) else { return }
+        activateConnection(connection)
+    }
+
+    func configuredProfileConnectionForActiveHost(named profileName: String) -> ConnectionProfile? {
+        guard let activeHostFingerprint else { return nil }
+        return connections.first {
+            $0.hostConnectionFingerprint == activeHostFingerprint &&
+                !$0.usesCustomHermesHome &&
+                $0.resolvedHermesProfileName == profileName
+        }
+    }
+
     func switchHermesProfile(to profileName: String) async {
-        guard let activeConnection else { return }
-        guard activeConnection.resolvedHermesProfileName != profileName else { return }
+        guard let activeHostFingerprint else { return }
+        let previousWorkspaceFingerprint = activeWorkspaceScopeFingerprint
         guard fileEditor == nil else {
             present(SSHTransportError.invalidConnection("Close the open file before switching Hermes profiles."))
             return
         }
 
-        let updatedConnection = activeConnection.applyingHermesProfile(named: profileName)
-        if let index = connections.firstIndex(where: { $0.id == updatedConnection.id }) {
-            connections[index] = updatedConnection
+        guard let matchingConnection = connections.first(where: {
+            $0.hostConnectionFingerprint == activeHostFingerprint &&
+                !$0.usesCustomHermesHome &&
+                $0.resolvedHermesProfileName == profileName
+        }) else {
+            present(SSHTransportError.invalidConnection("Add \(profileName) under this host in Connections and set its Chat Port before switching to it."))
+            return
         }
 
-        overview = nil
-        markSessionsPendingLoadIfNeeded()
-        cronJobs = []
-        skills = []
-        selectedSkillDetail = nil
-        skillsError = nil
-        directoryListing = nil
-        activeDirectoryPath = updatedConnection.remoteHermesHomePath
-        persistConnections()
+        selectProfileConnection(matchingConnection)
+        if previousWorkspaceFingerprint != matchingConnection.workspaceScopeFingerprint {
+            markSessionsPendingLoadIfNeeded()
+            cronJobs = []
+            skills = []
+            selectedSkillDetail = nil
+            skillsError = nil
+            directoryListing = nil
+            fileEditor = nil
+            activeDirectoryPath = matchingConnection.remoteHermesHomePath
+            overview = nil
+            persistConnections()
+        }
+        await nativeChatStore.syncWithActiveConnection()
         await refreshOverview()
     }
 
@@ -287,9 +365,16 @@ final class HermesPhoneStore: ObservableObject {
         }
     }
 
+    func cachedTranscript(for sessionID: String) -> [SessionMessage]? {
+        guard let connection = activeConnection else { return nil }
+        return transcriptCache[transcriptCacheKey(connection: connection, sessionID: sessionID)]
+    }
+
     func transcript(for sessionID: String) async throws -> [SessionMessage] {
         guard let connection = activeConnection else { return [] }
-        return try await sessionBrowserService.loadTranscript(connection: connection, sessionID: sessionID)
+        let transcript = try await sessionBrowserService.loadTranscript(connection: connection, sessionID: sessionID)
+        transcriptCache[transcriptCacheKey(connection: connection, sessionID: sessionID)] = transcript
+        return transcript
     }
 
     func resumeSessionInTerminal(_ session: SessionSummary) {
@@ -625,6 +710,8 @@ final class HermesPhoneStore: ObservableObject {
         do {
             let envelope = PersistenceEnvelope(
                 activeConnectionID: activeConnectionID,
+                activeHostFingerprint: activeHostFingerprint,
+                activeProfileNameByHost: activeProfileNameByHost,
                 connections: connections,
                 terminalWorkspace: terminalWorkspace.snapshot(),
                 workspaceFileBookmarks: workspaceFileBookmarks
@@ -649,6 +736,14 @@ final class HermesPhoneStore: ObservableObject {
             let envelope = try decoder.decode(PersistenceEnvelope.self, from: data)
             connections = envelope.connections
             activeConnectionID = envelope.activeConnectionID ?? connections.first?.id
+            activeHostFingerprint = envelope.activeHostFingerprint ??
+                connections.first(where: { $0.id == activeConnectionID })?.hostConnectionFingerprint ??
+                connections.first?.hostConnectionFingerprint
+            activeProfileNameByHost = envelope.activeProfileNameByHost
+            if let activeConnection = connections.first(where: { $0.id == activeConnectionID }) {
+                activeProfileNameByHost[activeConnection.hostConnectionFingerprint] = activeConnection.resolvedHermesProfileName
+            }
+            activeConnectionID = activeConnection?.id
             terminalWorkspace.restore(from: envelope.terminalWorkspace, availableConnections: connections)
             workspaceFileBookmarks = envelope.workspaceFileBookmarks
         } catch {
@@ -660,7 +755,27 @@ final class HermesPhoneStore: ObservableObject {
         sessions = []
         currentSessionsLoadID = nil
         isLoadingSessions = false
-        sessionsLoadState = activeConnectionID == nil ? .idle : .pending
+        sessionsLoadState = activeConnection == nil ? .idle : .pending
+    }
+
+    private func selectProfileConnection(_ connection: ConnectionProfile) {
+        activeHostFingerprint = connection.hostConnectionFingerprint
+        activeProfileNameByHost[connection.hostConnectionFingerprint] = connection.resolvedHermesProfileName
+        activeConnectionID = connection.id
+    }
+
+    private func transcriptCacheKey(connection: ConnectionProfile, sessionID: String) -> String {
+        "\(connection.workspaceScopeFingerprint)|\(sessionID)"
+    }
+
+    private func connectionForHost(fingerprint: String) -> ConnectionProfile? {
+        let hostConnections = connections.filter { $0.hostConnectionFingerprint == fingerprint }
+        guard !hostConnections.isEmpty else { return nil }
+        if let selectedProfileName = activeProfileNameByHost[fingerprint],
+           let selectedConnection = hostConnections.first(where: { $0.resolvedHermesProfileName == selectedProfileName }) {
+            return selectedConnection
+        }
+        return hostConnections.first(where: \.usesDefaultHermesProfile) ?? hostConnections[0]
     }
 
     private func persistenceURL() throws -> URL {
@@ -774,9 +889,159 @@ final class SSHTransport: @unchecked Sendable {
             return try JSONDecoder().decode(Response.self, from: data)
         } catch {
             throw SSHTransportError.invalidResponse(
-                "Failed to decode remote JSON: \(error.localizedDescription)\n\n\(result.stdout)"
+                formattedInvalidJSONResponse(
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                    decodingError: error
+                )
             )
         }
+    }
+
+    func executeJSONLines<Response: Decodable>(
+        on connection: ConnectionProfile,
+        pythonScript: String,
+        responseType: Response.Type,
+        onLine: @escaping @Sendable (Response) async throws -> Void
+    ) async throws {
+        let credentialStore = ConnectionSecretsStore()
+        guard let credential = try credentialStore.load(for: connection.id) else {
+            throw HermesPhoneStoreError.missingCredential
+        }
+
+        let client = try await makeClient(connection: connection, credential: credential)
+        defer {
+            Task { try? await client.close() }
+        }
+
+        let wrapped = makeWrappedCommand(
+            for: connection,
+            remoteCommand: "python3 -",
+            standardInput: Data(pythonScript.utf8)
+        )
+        let decoder = JSONDecoder()
+        var stdoutRemainder = ""
+        var stderr = ByteBuffer()
+        var exitCode: Int32 = 0
+
+        func consumeStdout(_ chunk: ByteBuffer) async throws {
+            guard let text = chunk.getString(at: chunk.readerIndex, length: chunk.readableBytes), !text.isEmpty else {
+                return
+            }
+            stdoutRemainder.append(text)
+            while let newlineRange = stdoutRemainder.range(of: "\n") {
+                let line = String(stdoutRemainder[..<newlineRange.lowerBound])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                stdoutRemainder.removeSubrange(stdoutRemainder.startIndex ... newlineRange.lowerBound)
+                guard !line.isEmpty else { continue }
+                guard let data = line.data(using: .utf8) else {
+                    throw SSHTransportError.invalidResponse("Remote stream line was not valid UTF-8.")
+                }
+                do {
+                    try await onLine(decoder.decode(Response.self, from: data))
+                } catch let transportError as SSHTransportError {
+                    throw transportError
+                } catch {
+                    throw SSHTransportError.invalidResponse("Failed to decode remote JSON stream line: \(error.localizedDescription)\n\nline:\n\(shortenedOutputPreview(line, limit: 2000))")
+                }
+            }
+        }
+
+        do {
+            let streams = try await client.executeCommandPair(wrapped)
+            async let stderrResult = collectBuffer(from: streams.stderr)
+            do {
+                for try await chunk in streams.stdout {
+                    try await consumeStdout(chunk)
+                }
+                let line = stdoutRemainder.trimmingCharacters(in: .whitespacesAndNewlines)
+                stdoutRemainder.removeAll(keepingCapacity: false)
+                if !line.isEmpty {
+                    guard let data = line.data(using: .utf8) else {
+                        throw SSHTransportError.invalidResponse("Remote stream line was not valid UTF-8.")
+                    }
+                    try await onLine(try decoder.decode(Response.self, from: data))
+                }
+            } catch let failure as SSHClient.CommandFailed {
+                exitCode = Int32(failure.exitCode)
+            }
+            let collectedStderr = await stderrResult
+            stderr = collectedStderr.buffer
+            exitCode = exitCode == 0 ? (collectedStderr.exitCode ?? 0) : exitCode
+            if let failure = collectedStderr.failure {
+                throw failure
+            }
+        } catch let failure as SSHClient.CommandFailed {
+            exitCode = Int32(failure.exitCode)
+        } catch {
+            throw mapConnectionError(error, connection: connection)
+        }
+
+        try validateSuccessfulExit(
+            SSHCommandResult(stdout: "", stderr: String(buffer: stderr), exitCode: exitCode),
+            for: connection
+        )
+    }
+
+    private func formattedInvalidJSONResponse(
+        stdout: String,
+        stderr: String,
+        decodingError: Error
+    ) -> String {
+        let trimmedStdout = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedStderr = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if looksLikeNonJSONShellOutput(trimmedStdout) {
+            let guidance = "Remote command returned non-JSON output. This usually means a shell startup file or Hermes startup command printed text during a non-interactive SSH command. Keep startup files quiet for non-interactive SSH sessions and retry."
+            let preview = shortenedOutputPreview(trimmedStdout)
+            if preview.isEmpty {
+                return guidance
+            }
+            return "\(guidance)\n\nPreview:\n\(preview)"
+        }
+
+        var message = "Failed to decode remote JSON: \(decodingErrorDescription(decodingError))"
+        if !trimmedStdout.isEmpty {
+            message += "\n\nstdout:\n\(shortenedOutputPreview(trimmedStdout, limit: 2000))"
+        }
+        if !trimmedStderr.isEmpty {
+            message += "\n\nstderr:\n\(shortenedOutputPreview(trimmedStderr, limit: 2000))"
+        }
+        return message
+    }
+
+    private func decodingErrorDescription(_ error: Error) -> String {
+        if let decodingError = error as? DecodingError {
+            let path: String
+            switch decodingError {
+            case .typeMismatch(_, let context), .valueNotFound(_, let context), .keyNotFound(_, let context), .dataCorrupted(let context):
+                path = context.codingPath.map(\.stringValue).joined(separator: ".")
+            @unknown default:
+                path = ""
+            }
+            let base = error.localizedDescription
+            return path.isEmpty ? base : "\(base) at \(path)"
+        }
+        return error.localizedDescription
+    }
+
+    private func looksLikeNonJSONShellOutput(_ output: String) -> Bool {
+        guard let firstCharacter = output.first else { return false }
+        if firstCharacter == "{" || firstCharacter == "[" {
+            return false
+        }
+
+        let lowered = output.lowercased()
+        return output.contains("{") ||
+            output.contains("[") ||
+            lowered.contains("welcome") ||
+            lowered.contains("last login")
+    }
+
+    private func shortenedOutputPreview(_ output: String, limit: Int = 240) -> String {
+        guard output.count > limit else { return output }
+        let endIndex = output.index(output.startIndex, offsetBy: limit)
+        return String(output[..<endIndex]).trimmingCharacters(in: .whitespacesAndNewlines) + "..."
     }
 
     func shellBootstrapSequence(

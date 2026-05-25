@@ -22,6 +22,7 @@ struct SSHCredentialRecord: Codable, Equatable, Sendable {
     var password: String?
     var privateKey: String?
     var passphrase: String?
+    var apiServerKey: String?
 }
 
 struct SSHCommandResult: Sendable {
@@ -166,9 +167,154 @@ final class SSHTransport: @unchecked Sendable {
             return try JSONDecoder().decode(Response.self, from: data)
         } catch {
             throw SSHTransportError.invalidResponse(
-                "Failed to decode remote JSON: \(error.localizedDescription)\n\n\(result.stdout)"
+                formattedInvalidJSONResponse(
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                    decodingError: error
+                )
             )
         }
+    }
+
+    func executeJSONLines<Response: Decodable>(
+        on connection: ConnectionProfile,
+        pythonScript: String,
+        responseType _: Response.Type,
+        onLine: @escaping @Sendable (Response) async throws -> Void
+    ) async throws {
+        let credentialStore = ConnectionSecretsStore()
+        guard let credential = try credentialStore.load(for: connection.id) else {
+            throw HermesPhoneStoreError.missingCredential
+        }
+
+        let client = try await makeClient(connection: connection, credential: credential)
+        defer { Task { try? await client.close() } }
+
+        let wrapped = makeWrappedCommand(
+            for: connection,
+            remoteCommand: "python3 -",
+            standardInput: Data(pythonScript.utf8)
+        )
+        let decoder = JSONDecoder()
+        var stdoutRemainder = ""
+        var stderr = ByteBuffer()
+        var exitCode: Int32 = 0
+
+        func consumeStdout(_ chunk: ByteBuffer) async throws {
+            guard let text = chunk.getString(at: chunk.readerIndex, length: chunk.readableBytes), !text.isEmpty else {
+                return
+            }
+            stdoutRemainder.append(text)
+            while let newlineRange = stdoutRemainder.range(of: "\n") {
+                let line = String(stdoutRemainder[..<newlineRange.lowerBound])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                stdoutRemainder.removeSubrange(stdoutRemainder.startIndex ... newlineRange.lowerBound)
+                guard !line.isEmpty else { continue }
+                guard let data = line.data(using: .utf8) else {
+                    throw SSHTransportError.invalidResponse("Remote stream line was not valid UTF-8.")
+                }
+                do {
+                    try await onLine(decoder.decode(Response.self, from: data))
+                } catch let transportError as SSHTransportError {
+                    throw transportError
+                } catch {
+                    throw SSHTransportError.invalidResponse("Failed to decode remote JSON stream line: \(error.localizedDescription)\n\nline:\n\(shortenedOutputPreview(line, limit: 2000))")
+                }
+            }
+        }
+
+        do {
+            let streams = try await client.executeCommandPair(wrapped)
+            async let stderrResult = collectBuffer(from: streams.stderr)
+            do {
+                for try await chunk in streams.stdout {
+                    try await consumeStdout(chunk)
+                }
+                let line = stdoutRemainder.trimmingCharacters(in: .whitespacesAndNewlines)
+                stdoutRemainder.removeAll(keepingCapacity: false)
+                if !line.isEmpty {
+                    guard let data = line.data(using: .utf8) else {
+                        throw SSHTransportError.invalidResponse("Remote stream line was not valid UTF-8.")
+                    }
+                    try await onLine(try decoder.decode(Response.self, from: data))
+                }
+            } catch let failure as SSHClient.CommandFailed {
+                exitCode = Int32(failure.exitCode)
+            }
+            let collectedStderr = await stderrResult
+            stderr = collectedStderr.buffer
+            exitCode = exitCode == 0 ? (collectedStderr.exitCode ?? 0) : exitCode
+        } catch let failure as SSHClient.CommandFailed {
+            exitCode = Int32(failure.exitCode)
+        } catch {
+            throw mapConnectionError(error, connection: connection)
+        }
+
+        try validateSuccessfulExit(
+            SSHCommandResult(stdout: "", stderr: String(buffer: stderr), exitCode: exitCode),
+            for: connection
+        )
+    }
+
+    private func formattedInvalidJSONResponse(
+        stdout: String,
+        stderr: String,
+        decodingError: Error
+    ) -> String {
+        let trimmedStdout = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedStderr = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if looksLikeNonJSONShellOutput(trimmedStdout) {
+            let guidance = "Remote command returned non-JSON output. This usually means a shell startup file or gateway bootstrap printed text during a non-interactive SSH command. Keep startup files quiet for non-interactive SSH sessions and retry."
+            let preview = shortenedOutputPreview(trimmedStdout)
+            if preview.isEmpty {
+                return guidance
+            }
+            return "\(guidance)\n\nPreview:\n\(preview)"
+        }
+
+        var message = "Failed to decode remote JSON: \(decodingErrorDescription(decodingError))"
+        if !trimmedStdout.isEmpty {
+            message += "\n\nstdout:\n\(shortenedOutputPreview(trimmedStdout, limit: 2000))"
+        }
+        if !trimmedStderr.isEmpty {
+            message += "\n\nstderr:\n\(shortenedOutputPreview(trimmedStderr, limit: 2000))"
+        }
+        return message
+    }
+
+    private func decodingErrorDescription(_ error: Error) -> String {
+        if let decodingError = error as? DecodingError {
+            let path: String
+            switch decodingError {
+            case .typeMismatch(_, let context), .valueNotFound(_, let context), .keyNotFound(_, let context), .dataCorrupted(let context):
+                path = context.codingPath.map(\.stringValue).joined(separator: ".")
+            @unknown default:
+                path = ""
+            }
+            let base = error.localizedDescription
+            return path.isEmpty ? base : "\(base) at \(path)"
+        }
+        return error.localizedDescription
+    }
+
+    private func looksLikeNonJSONShellOutput(_ output: String) -> Bool {
+        guard let firstCharacter = output.first else { return false }
+        if firstCharacter == "{" || firstCharacter == "[" {
+            return false
+        }
+
+        let lowered = output.lowercased()
+        return output.contains("{") ||
+            output.contains("[") ||
+            lowered.contains("welcome") ||
+            lowered.contains("last login")
+    }
+
+    private func shortenedOutputPreview(_ output: String, limit: Int = 240) -> String {
+        guard output.count > limit else { return output }
+        let endIndex = output.index(output.startIndex, offsetBy: limit)
+        return String(output[..<endIndex]).trimmingCharacters(in: .whitespacesAndNewlines) + "..."
     }
 
     func validateSuccessfulExit(_ result: SSHCommandResult, for connection: ConnectionProfile? = nil) throws {

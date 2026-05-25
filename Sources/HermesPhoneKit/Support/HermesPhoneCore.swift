@@ -35,6 +35,7 @@ struct SSHCredentialRecord: Codable, Equatable, Sendable {
     var password: String?
     var privateKey: String?
     var passphrase: String?
+    var apiServerKey: String?
 }
 
 struct SSHCommandResult: Sendable {
@@ -62,12 +63,16 @@ enum SSHTransportError: LocalizedError, Equatable {
 
 struct PersistenceEnvelope: Codable {
     var activeConnectionID: UUID?
+    var activeHostFingerprint: String?
+    var activeProfileNameByHost: [String: String]
     var connections: [ConnectionProfile]
     var terminalWorkspace: PersistedTerminalWorkspace?
     var workspaceFileBookmarks: [WorkspaceFileBookmark] = []
 
     enum CodingKeys: String, CodingKey {
         case activeConnectionID
+        case activeHostFingerprint
+        case activeProfileNameByHost
         case connections
         case terminalWorkspace
         case workspaceFileBookmarks
@@ -75,11 +80,15 @@ struct PersistenceEnvelope: Codable {
 
     init(
         activeConnectionID: UUID?,
+        activeHostFingerprint: String? = nil,
+        activeProfileNameByHost: [String: String] = [:],
         connections: [ConnectionProfile],
         terminalWorkspace: PersistedTerminalWorkspace?,
         workspaceFileBookmarks: [WorkspaceFileBookmark] = []
     ) {
         self.activeConnectionID = activeConnectionID
+        self.activeHostFingerprint = activeHostFingerprint
+        self.activeProfileNameByHost = activeProfileNameByHost
         self.connections = connections
         self.terminalWorkspace = terminalWorkspace
         self.workspaceFileBookmarks = workspaceFileBookmarks
@@ -88,6 +97,8 @@ struct PersistenceEnvelope: Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         activeConnectionID = try container.decodeIfPresent(UUID.self, forKey: .activeConnectionID)
+        activeHostFingerprint = try container.decodeIfPresent(String.self, forKey: .activeHostFingerprint)
+        activeProfileNameByHost = try container.decodeIfPresent([String: String].self, forKey: .activeProfileNameByHost) ?? [:]
         connections = try container.decode([ConnectionProfile].self, forKey: .connections)
         terminalWorkspace = try container.decodeIfPresent(PersistedTerminalWorkspace.self, forKey: .terminalWorkspace)
         workspaceFileBookmarks = try container.decodeIfPresent([WorkspaceFileBookmark].self, forKey: .workspaceFileBookmarks) ?? []

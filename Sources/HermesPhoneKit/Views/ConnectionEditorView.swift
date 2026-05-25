@@ -15,6 +15,8 @@ struct ConnectionDraft {
     var user = ""
     var hermesProfile = ""
     var customHermesHomePath = ""
+    var apiServerPort = "8642"
+    var apiServerKey = ""
     var authKind: SSHCredentialKind = .password
     var password = ""
     var privateKey = ""
@@ -29,6 +31,23 @@ struct ConnectionDraft {
         user = connection.sshUser
         hermesProfile = connection.hermesProfile ?? ""
         customHermesHomePath = connection.customHermesHomePath ?? ""
+        apiServerPort = String(connection.resolvedAPIServerPort)
+        apiServerKey = credential.apiServerKey ?? ""
+        authKind = connection.authKind
+        password = credential.password ?? ""
+        privateKey = credential.privateKey ?? ""
+        passphrase = credential.passphrase ?? ""
+    }
+
+    init(profileTemplateFrom connection: ConnectionProfile, credential: SSHCredentialRecord, apiServerPort suggestedAPIPort: Int) {
+        label = ""
+        host = connection.sshHost
+        port = connection.sshPort.map(String.init) ?? "22"
+        user = connection.sshUser
+        hermesProfile = ""
+        customHermesHomePath = ""
+        apiServerPort = String(suggestedAPIPort)
+        apiServerKey = credential.apiServerKey ?? ""
         authKind = connection.authKind
         password = credential.password ?? ""
         privateKey = credential.privateKey ?? ""
@@ -45,6 +64,7 @@ struct ConnectionDraft {
             sshUser: user,
             hermesProfile: hermesProfile.nilIfBlank,
             customHermesHomePath: customHermesHomePath.nilIfBlank,
+            apiServerPort: Int(apiServerPort),
             authKind: authKind
         )
     }
@@ -53,7 +73,8 @@ struct ConnectionDraft {
         SSHCredentialRecord(
             password: password.nilIfBlank,
             privateKey: privateKey.nilIfBlank,
-            passphrase: passphrase.nilIfBlank
+            passphrase: passphrase.nilIfBlank,
+            apiServerKey: apiServerKey.nilIfBlank
         )
     }
 
@@ -73,6 +94,54 @@ struct ConnectionDraft {
         }
         return value
     }
+
+    var resolvedHermesProfileName: String {
+        if let trimmedCustomHermesHomePath {
+            return customHermesHomeDisplayName(trimmedCustomHermesHomePath)
+        }
+        return trimmedHermesProfile ?? "default"
+    }
+
+    var resolvedAPIServerPort: String {
+        guard let port = Int(apiServerPort), port > 0 else { return "8642" }
+        return String(port)
+    }
+
+    var chatAPIEnvFilePath: String {
+        if let trimmedCustomHermesHomePath {
+            return "\(trimmedCustomHermesHomePath)/.env"
+        }
+        if let trimmedHermesProfile {
+            return "~/.hermes/profiles/\(trimmedHermesProfile)/.env"
+        }
+        return "~/.hermes/.env"
+    }
+
+    var chatAPIRestartGuidance: String {
+        if let trimmedCustomHermesHomePath {
+            return "Riavvia Hermes usando la home \(trimmedCustomHermesHomePath)."
+        }
+        if let trimmedHermesProfile {
+            return "Riavvia Hermes usando il profilo \(trimmedHermesProfile)."
+        }
+        return "Riavvia Hermes usando il profilo default."
+    }
+
+    var chatAPIEnvSnippet: String {
+        let keyValue = apiServerKey.nilIfBlank == nil ? "" : "<same value as Chat Key>"
+        return """
+        API_SERVER_ENABLED=true
+        API_SERVER_PORT=\(resolvedAPIServerPort)
+        API_SERVER_HOST=127.0.0.1
+        API_SERVER_KEY=\(keyValue)
+        """
+    }
+
+    private func customHermesHomeDisplayName(_ path: String) -> String {
+        let normalized = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let last = normalized.split(separator: "/").last else { return "custom" }
+        return String(last)
+    }
 }
 
 struct ConnectionEditorView: View {
@@ -86,42 +155,44 @@ struct ConnectionEditorView: View {
     var body: some View {
         Form {
             Section("Host") {
-                TextField("Label", text: $draft.label)
                 TextField("Host or IP", text: $draft.host)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                TextField("Port", text: $draft.port)
+                TextField("SSH Port", text: $draft.port)
                     .keyboardType(.numberPad)
-                TextField("User", text: $draft.user)
+                TextField("SSH User", text: $draft.user)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+
+                Text("Inserisci il Mac o server a cui ti colleghi via SSH. Terminale e Files funzionano già con questi dati.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
 
-            Section("Hermes") {
-                TextField("Profile (optional)", text: $draft.hermesProfile)
+            Section("Hermes Profile") {
+                TextField("Display Name", text: $draft.label)
+                TextField("Hermes Profile Name", text: $draft.hermesProfile)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                TextField("Custom Hermes Home (optional)", text: $draft.customHermesHomePath)
+                TextField("Custom Hermes Home", text: $draft.customHermesHomePath)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
 
-                Text("Standard remote layout: Hermes lives in ~/.hermes, or in ~/.hermes/profiles/<name> when you choose a profile.")
+                profileScopeHelp
+            }
+
+            Section("Chat nell'app") {
+                TextField("Chat Port", text: $draft.apiServerPort)
+                    .keyboardType(.numberPad)
+                SecureField("Chat Key (optional)", text: $draft.apiServerKey)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+
+                Text("Serve solo se vuoi chattare direttamente dall'app. Usa qui gli stessi valori che metti nel file .env di questo profilo.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 
-                if let customHermesHomePath = draft.trimmedCustomHermesHomePath {
-                    Text("Custom Hermes Home override: \(customHermesHomePath). HermesPhone will use this path as HERMES_HOME for Terminal and app-driven Hermes actions.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } else if let hermesProfile = draft.trimmedHermesProfile {
-                    Text("Resolved profile path: ~/.hermes/profiles/\(hermesProfile). The default Terminal shell stays host-level and auto-detects the Hermes install from the standard layout.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("The default Terminal shell auto-detects Hermes from the standard layout, checking ~/.hermes first and falling back to default or available profiles when needed.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+                chatSetupGuide
             }
 
             Section("Authentication") {
@@ -164,7 +235,7 @@ struct ConnectionEditorView: View {
                 }
             }
         }
-        .navigationTitle(editingConnectionID == nil ? "New Host" : "Edit Host")
+        .navigationTitle(editorTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -182,6 +253,87 @@ struct ConnectionEditorView: View {
                     )
                     dismiss()
                 }
+            }
+        }
+    }
+
+    private var editorTitle: String {
+        if editingConnectionID != nil {
+            return "Edit Profile"
+        }
+        return draft.host.nilIfBlank == nil ? "New Host" : "New Profile"
+    }
+
+    @ViewBuilder
+    private var profileScopeHelp: some View {
+        if let customHermesHomePath = draft.trimmedCustomHermesHomePath {
+            Text("Usa la home Hermes \(customHermesHomePath). Lascia vuoto Hermes Profile Name quando usi una home personalizzata.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        } else if let hermesProfile = draft.trimmedHermesProfile {
+            Text("Usa il profilo Hermes \(hermesProfile). Il suo file di configurazione è ~/.hermes/profiles/\(hermesProfile)/.env.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        } else {
+            Text("Usa il profilo default. Il suo file di configurazione è ~/.hermes/.env.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var chatSetupGuide: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Passi per attivare la chat")
+                .font(.footnote.weight(.semibold))
+
+            ConnectionSetupStep(number: "1", title: "Apri il file .env del profilo", detail: "\(draft.chatAPIEnvFilePath). Puoi farlo da Files o dal Terminale dell'app.")
+            codeBlock(draft.chatAPIEnvSnippet)
+
+            ConnectionSetupStep(
+                number: "2",
+                title: "Copia gli stessi valori qui",
+                detail: "La porta salvata nell'app deve essere \(draft.resolvedAPIServerPort). La Chat Key è opzionale: se la lasci vuota in .env, lasciala vuota anche qui."
+            )
+
+            ConnectionSetupStep(number: "3", title: "Riavvia Hermes per questo profilo", detail: draft.chatAPIRestartGuidance)
+
+            Text("Solo se tieni più profili attivi insieme: usa una porta diversa per ognuno, per esempio 8642, 8643, 8644.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func codeBlock(_ value: String) -> some View {
+        Text(value)
+            .font(.caption.monospaced())
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(Color(.tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+private struct ConnectionSetupStep: View {
+    let number: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(number)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(width: 22, height: 22)
+                .background(Color.accentColor, in: Circle())
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.footnote.weight(.semibold))
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
             }
         }
     }

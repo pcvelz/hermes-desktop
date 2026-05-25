@@ -149,11 +149,14 @@ final class SessionBrowserService: @unchecked Sendable {
         context = None
 
         try:
-            context = try_open_store()
+            items = load_cli_export_transcript(request["session_id"])
 
-            if context is None:
+            if items is None:
+                context = try_open_store()
+
+            if items is None and context is None:
                 items = load_jsonl_transcript(request["session_id"])
-            else:
+            elif items is None:
                 query = (
                     f"SELECT * FROM {quote_ident(context['message_table'])} "
                     f"WHERE {quote_ident(context['message_session_id_column'])} = ? "
@@ -297,6 +300,7 @@ final class SessionBrowserService: @unchecked Sendable {
         import sqlite3
         import datetime
         import re
+        import subprocess
 
         def display_hermes_home():
             requested = stringify(payload.get("hermes_home"))
@@ -624,6 +628,81 @@ final class SessionBrowserService: @unchecked Sendable {
                 match.pop("_priority", None)
 
             return matches
+
+        def message_item_from_record(record, fallback_id):
+            metadata = {}
+            for key, value in record.items():
+                if key in {"id", "session_id", "role", "content", "timestamp"}:
+                    continue
+                normalized_value = prune_metadata_value(normalize_json_value(value))
+                if normalized_value is not None:
+                    metadata[key] = normalized_value
+
+            return {
+                "id": stringify(record.get("id")) or str(fallback_id),
+                "role": stringify(record.get("role")) or "event",
+                "content": extract_record_content(record),
+                "timestamp": normalize_json_value(record.get("timestamp")),
+                "metadata": metadata or None,
+            }
+
+        def load_cli_export_transcript(session_id):
+            session_id = stringify(session_id)
+            if not session_id:
+                return None
+
+            hermes_bin = find_hermes_binary(request)
+            if not hermes_bin:
+                return None
+
+            env = os.environ.copy()
+            env["HERMES_HOME"] = str(resolved_hermes_home(request))
+            try:
+                result = subprocess.run(
+                    [hermes_bin, "sessions", "export", "-", "--session-id", session_id],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=env,
+                    timeout=45,
+                )
+            except Exception:
+                return None
+
+            if result.returncode != 0:
+                return None
+
+            exported_records = []
+            for raw_line in result.stdout.splitlines():
+                line = raw_line.strip()
+                if not line or not line.startswith("{"):
+                    continue
+                try:
+                    record = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(record, dict):
+                    exported_records.append(record)
+
+            if not exported_records:
+                return None
+
+            message_records = []
+            for record in exported_records:
+                messages = record.get("messages")
+                if isinstance(messages, list):
+                    message_records.extend([item for item in messages if isinstance(item, dict)])
+                elif "role" in record or "content" in record:
+                    message_records.append(record)
+
+            if not message_records:
+                return []
+
+            return [
+                message_item_from_record(record, index)
+                for index, record in enumerate(message_records, start=1)
+            ]
 
         def build_sqlite_message_stats(context):
             stats = {}

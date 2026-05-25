@@ -5,6 +5,10 @@
 /.cache
 /.cache/
 /.cache-*
+/.home/
+/.package-cache/
+/.xcode-pkgs/
+/.xcode-pkgs2/
 /.deriveddata*
 /dist
 /docs/*

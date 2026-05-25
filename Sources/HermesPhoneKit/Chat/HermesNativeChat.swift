@@ -173,17 +173,20 @@ final class HermesNativeChatStore: ObservableObject {
     weak var phoneStore: HermesPhoneStore?
 
     private let sshTransport: SSHTransport
-    private var gatewaySession: HermesGatewaySSHSession?
-    private var eventTask: Task<Void, Never>?
+    private let apiChatService: HermesAPIChatService
     private var activeConnectionFingerprint: String?
     private var currentAssistantMessageID: UUID?
     private var pendingResumeSession: SessionSummary?
     private var isCreatingSession = false
     private var conversationGeneration = 0
+    private var currentResponseID: String?
+    private var pendingAPIHistory: [HermesChatMessage] = []
+    private var isContinuingRemoteSession = false
 
     init(phoneStore: HermesPhoneStore, sshTransport: SSHTransport) {
         self.phoneStore = phoneStore
         self.sshTransport = sshTransport
+        self.apiChatService = HermesAPIChatService(sshTransport: sshTransport)
     }
 
     var canUseNativeChat: Bool {
@@ -288,13 +291,11 @@ final class HermesNativeChatStore: ObservableObject {
         isResumingSession = false
         clearConversationState(keepDiagnostics: true)
         sessionStatus = "Ready to start a new chat"
-        if gatewaySession == nil {
-            connectionStatus = phoneStore?.activeConnection == nil ? "No active SSH connection" : "Idle"
-        }
+        connectionStatus = phoneStore?.activeConnection == nil ? "No active SSH connection" : "API server ready"
     }
 
     func prepareNewChatReplacingActiveConversation() async {
-        await closeActiveConversationIfNeeded(keepingGatewayWarm: true)
+        await closeActiveConversationIfNeeded()
         prepareNewChat()
         await prepareSessionForNewChat()
     }
@@ -303,10 +304,13 @@ final class HermesNativeChatStore: ObservableObject {
         let fingerprint = phoneStore?.activeWorkspaceScopeFingerprint
         guard fingerprint != activeConnectionFingerprint else { return }
 
-        await disconnectFromGateway(resetMessages: true)
+        resetAPITransport(resetMessages: true)
         bootstrapStatus = nil
         gatewayInfo = [:]
         currentSessionID = nil
+        currentResponseID = nil
+        pendingAPIHistory = []
+        isContinuingRemoteSession = false
         pendingResumeSession = nil
         pendingResumeTitle = nil
         pendingResumeRequestID = nil
@@ -318,6 +322,8 @@ final class HermesNativeChatStore: ObservableObject {
     }
 
     func refreshBootstrapStatus(force: Bool = false) async {
+        await syncWithActiveConnection()
+
         if isCheckingBootstrap {
             connectionStatus = "Checking remote Hermes environment..."
             await waitForBootstrapProbe()
@@ -335,6 +341,10 @@ final class HermesNativeChatStore: ObservableObject {
                 hermesCLIAvailable: false,
                 hermesVersion: nil,
                 tuiGatewayAvailable: false,
+                apiServerAvailable: false,
+                apiAuthenticated: false,
+                apiServerPort: 8642,
+                apiModel: nil,
                 canUseNativeChat: false,
                 fallbackReason: "Choose a saved connection before opening Chat."
             )
@@ -342,44 +352,82 @@ final class HermesNativeChatStore: ObservableObject {
             return
         }
 
+        guard connection.hasExplicitAPIServerPort else {
+            let status = HermesChatBootstrapStatus(
+                sshConnected: true,
+                pythonAvailable: false,
+                hermesCLIAvailable: false,
+                hermesVersion: nil,
+                tuiGatewayAvailable: false,
+                apiServerAvailable: false,
+                apiAuthenticated: false,
+                apiServerPort: connection.resolvedAPIServerPort,
+                apiModel: nil,
+                canUseNativeChat: false,
+                fallbackReason: "Set an API Server Port for the selected Hermes profile in Connections."
+            )
+            bootstrapStatus = status
+            connectionStatus = "API port not set"
+            return
+        }
+
         isCheckingBootstrap = true
         defer { isCheckingBootstrap = false }
-        connectionStatus = "Checking remote Hermes environment..."
+        connectionStatus = "Checking Hermes API Server..."
         let requestedFingerprint = connection.workspaceScopeFingerprint
-        let status = await sshTransport.probeNativeChatAvailability(on: connection)
+        let apiKey = (try? phoneStore?.credential(for: connection))?.apiServerKey
+        let status = await apiChatService.probe(connection: connection, apiKey: apiKey)
         guard phoneStore?.activeWorkspaceScopeFingerprint == requestedFingerprint else { return }
         bootstrapStatus = status
 
         if status.canUseNativeChat {
-            connectionStatus = "Ready for native chat"
-            if let version = status.hermesVersion, !version.isEmpty {
-                gatewayInfo["Hermes"] = version
+            connectionStatus = "API server ready"
+            gatewayInfo["API"] = "127.0.0.1:\(status.apiServerPort)"
+            if let model = status.apiModel ?? status.hermesVersion, !model.isEmpty {
+                gatewayInfo["Model"] = model
             }
         } else {
-            connectionStatus = "Native chat unavailable"
+            connectionStatus = "API server unavailable"
         }
     }
 
     private func createSession() async {
-        await ensureCurrentChatSession(clearsConversationBeforeCreate: !hasConversationContent)
+        if isCreatingSession {
+            sessionStatus = "Preparing chat session..."
+            await waitForSessionCreation()
+            return
+        }
+
+        isCreatingSession = true
+        isPreparingSession = true
+        defer {
+            isCreatingSession = false
+            isPreparingSession = false
+        }
+
+        let requestedGeneration = conversationGeneration
+        sessionStatus = "Creating API conversation..."
+        let conversationID = "hermes-phone-\(UUID().uuidString)"
+        guard conversationGeneration == requestedGeneration else { return }
+        currentSessionID = conversationID
+        currentResponseID = nil
+        isContinuingRemoteSession = false
+        sessionStatus = "Chat session ready"
     }
 
     @discardableResult
-    private func ensureCurrentChatSession(clearsConversationBeforeCreate: Bool) async -> Bool {
-        await ensureGatewaySession()
-        guard let session = gatewaySession else { return false }
+    private func ensureCurrentChatSession() async -> Bool {
+        await ensureAPIAvailable()
+        guard canUseNativeChat else { return false }
         if currentSessionID != nil { return true }
 
-        await createSession(
-            using: session,
-            clearsConversationBeforeCreate: clearsConversationBeforeCreate
-        )
+        await createSession()
         return currentSessionID != nil
     }
 
     private func prepareSessionForNewChat() async {
         guard !isResumingSession else { return }
-        await ensureCurrentChatSession(clearsConversationBeforeCreate: !hasConversationContent)
+        await ensureCurrentChatSession()
     }
 
     @discardableResult
@@ -396,56 +444,46 @@ final class HermesNativeChatStore: ObservableObject {
         }
 
         sessionStatus = "Resuming \(summary.resolvedTitle)..."
-        await ensureGatewaySession()
-        guard let session = gatewaySession else {
+        await ensureAPIAvailable()
+        guard canUseNativeChat else {
             if !canUseNativeChat {
-                sessionStatus = fallbackReason ?? "Native chat is not available on this host."
+                sessionStatus = fallbackReason ?? "Hermes API Server is not available on this host."
             }
             return false
         }
 
         clearConversationState(keepDiagnostics: true)
-        sessionStatus = "Requesting \(summary.resolvedTitle)..."
+        currentSessionID = summary.id
+        currentResponseID = nil
+        sessionStatus = "Loading \(summary.resolvedTitle)..."
 
-        do {
-            let result = try await session.request(
-                method: "session.resume",
-                params: [
-                    "session_id": .string(summary.id),
-                    "id": .string(summary.id)
-                ],
-                timeout: 60
-            )
-            applySessionResult(result, preferredSessionID: summary.id)
-            if let parentSessionID = summary.parentSessionID,
-               let currentSessionID {
-                registerContinuation(
-                    parentSessionID: parentSessionID,
-                    currentSessionID: currentSessionID,
-                    title: summary.title,
-                    message: "Resumed the latest compacted continuation for this conversation."
-                )
+        if let cachedHistory = phoneStore?.cachedTranscript(for: summary.id) {
+            applyTranscript(cachedHistory)
+            pendingAPIHistory = messages
+        } else {
+            do {
+                let history = try await phoneStore?.transcript(for: summary.id) ?? []
+                applyTranscript(history)
+                pendingAPIHistory = messages
+            } catch {
+                pendingAPIHistory = []
+                appendDiagnostic("Transcript preload failed for \(summary.id): \(error.localizedDescription)")
             }
-
-            if messages.isEmpty, let gatewaySessionID = currentSessionID {
-                sessionStatus = "Loading chat history..."
-                let history = try await session.request(
-                    method: "session.history",
-                    params: [
-                        "session_id": .string(gatewaySessionID),
-                        "id": .string(gatewaySessionID)
-                    ],
-                    timeout: 60
-                )
-                applyHistoryResult(history)
-            }
-
-            sessionStatus = "Chat resumed"
-            return true
-        } catch {
-            present(error)
-            return false
         }
+
+        isContinuingRemoteSession = true
+        if let parentSessionID = summary.parentSessionID,
+           let currentSessionID {
+            registerContinuation(
+                parentSessionID: parentSessionID,
+                currentSessionID: currentSessionID,
+                title: summary.title,
+                message: "Resumed the latest compacted continuation for this conversation."
+            )
+        }
+
+        sessionStatus = "Chat resumed"
+        return true
     }
 
     func queueResumeSession(_ summary: SessionSummary) {
@@ -466,7 +504,7 @@ final class HermesNativeChatStore: ObservableObject {
             return
         }
 
-        await closeActiveConversationIfNeeded(keepingGatewayWarm: true)
+        await closeActiveConversationIfNeeded()
         queueResumeSession(summary)
     }
 
@@ -486,19 +524,54 @@ final class HermesNativeChatStore: ObservableObject {
         isPerformingRequest = true
         defer { isPerformingRequest = false }
 
-        await ensureCurrentChatSession(clearsConversationBeforeCreate: false)
-        guard let session = gatewaySession, let currentSessionID else { return }
+        await ensureCurrentChatSession()
+        guard let connection = phoneStore?.activeConnection,
+              let currentSessionID else { return }
         sessionStatus = "Sending prompt..."
 
         do {
-            _ = try await session.request(
-                method: "prompt.submit",
-                params: [
-                    "session_id": .string(currentSessionID),
-                    "text": .string(message)
-                ],
-                timeout: 120
-            )
+            let apiKey = try phoneStore?.credential(for: connection).apiServerKey
+            if isContinuingRemoteSession {
+                var streamedContent = false
+                try await apiChatService.createChatCompletionStream(
+                    connection: connection,
+                    apiKey: apiKey,
+                    message: message,
+                    sessionID: currentSessionID
+                ) { event in
+                    await MainActor.run {
+                        streamedContent = self.applyAPIStreamEvent(event) || streamedContent
+                    }
+                }
+                pendingAPIHistory = []
+                if !streamedContent {
+                    appendSystemNotice("Hermes API Server returned no assistant text.")
+                }
+            } else {
+                let apiInput = apiInput(forNewUserMessage: message)
+                var streamedContent = false
+                let response = try await apiChatService.createResponseStream(
+                    connection: connection,
+                    apiKey: apiKey,
+                    input: apiInput,
+                    conversationID: currentSessionID,
+                    previousResponseID: currentResponseID
+                ) { event in
+                    await MainActor.run {
+                        streamedContent = self.applyAPIStreamEvent(event) || streamedContent
+                    }
+                }
+                pendingAPIHistory = []
+                if let response {
+                    if streamedContent {
+                        applyAPIResponseMetadata(response)
+                    } else {
+                        applyAPIResponse(response)
+                    }
+                } else if !streamedContent {
+                    appendSystemNotice("Hermes API Server returned no assistant text.")
+                }
+            }
         } catch {
             present(error)
         }
@@ -513,46 +586,17 @@ final class HermesNativeChatStore: ObservableObject {
     }
 
     func interrupt() async {
-        guard let session = gatewaySession, let currentSessionID else { return }
-        do {
-            sessionStatus = "Interrupting..."
-            _ = try await session.request(
-                method: "session.interrupt",
-                params: ["session_id": .string(currentSessionID)],
-                timeout: 20
-            )
-            sessionStatus = "Interrupt requested"
-        } catch {
-            present(error)
-        }
+        sessionStatus = "Interrupt is not available for the API responses path yet."
     }
 
     func closeChat(clearsConversation: Bool = true, disconnectsGateway: Bool = true) async {
-        if let session = gatewaySession, let currentSessionID {
-            do {
-                _ = try await session.request(
-                    method: "session.close",
-                    params: ["session_id": .string(currentSessionID)],
-                    timeout: 20
-                )
-            } catch {
-                appendDiagnostic("session.close failed: \(error.localizedDescription)")
-            }
-        }
-
-        if disconnectsGateway {
-            await disconnectFromGateway(resetMessages: false)
-        } else {
-            currentSessionID = nil
-            currentAssistantMessageID = nil
-            connectionStatus = gatewaySession == nil ? "Idle" : "Gateway connected"
-        }
-
         if clearsConversation {
             clearConversationState(keepDiagnostics: true)
         } else {
             currentSessionID = nil
             currentAssistantMessageID = nil
+            currentResponseID = nil
+            isContinuingRemoteSession = false
         }
         pendingResumeSession = nil
         pendingResumeTitle = nil
@@ -584,142 +628,29 @@ final class HermesNativeChatStore: ObservableObject {
         approved: Bool? = nil,
         responseText: String? = nil
     ) async {
-        guard let session = gatewaySession else { return }
-
-        let method: String
-        var params: [String: JSONValue] = [
-            "request_id": .string(card.requestID)
-        ]
-        if let sessionID = card.sessionID ?? currentSessionID {
-            params["session_id"] = .string(sessionID)
-        }
-
-        switch card.kind {
-        case .approval:
-            method = "approval.respond"
-            let allowed = approved ?? false
-            params["choice"] = .string(allowed ? "approve" : "deny")
-        case .clarify:
-            method = "clarify.respond"
-            let value = responseText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            params["answer"] = .string(value)
-        case .sudo:
-            method = "sudo.respond"
-            let value = responseText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            params["password"] = .string(value)
-        case .secret:
-            method = "secret.respond"
-            let value = responseText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            params["value"] = .string(value)
-        }
-
-        do {
-            _ = try await session.request(method: method, params: params, timeout: 45)
-            promptCards.removeAll { $0.id == card.id }
-            sessionStatus = "Reply sent"
-        } catch {
-            present(error)
-        }
+        promptCards.removeAll { $0.id == card.id }
+        sessionStatus = "Interactive API prompts are not wired yet."
     }
 
-    private func createSession(
-        using session: HermesGatewaySSHSession,
-        clearsConversationBeforeCreate: Bool
-    ) async {
-        if isCreatingSession {
-            sessionStatus = "Preparing chat session..."
-            await waitForSessionCreation()
-            return
-        }
-
-        isCreatingSession = true
-        isPreparingSession = true
-        defer {
-            isCreatingSession = false
-            isPreparingSession = false
-        }
-
-        if clearsConversationBeforeCreate {
-            clearConversationState(keepDiagnostics: true)
-        }
-
-        let requestedFingerprint = phoneStore?.activeWorkspaceScopeFingerprint
-        let requestedGeneration = conversationGeneration
-        sessionStatus = "Creating chat session..."
-
-        do {
-            let result = try await session.request(
-                method: "session.create",
-                params: [
-                    "client": .string("HermesPhone"),
-                    "source": .string("ios"),
-                    "ui": .string("native")
-                ],
-                timeout: 60
-            )
-            guard phoneStore?.activeWorkspaceScopeFingerprint == requestedFingerprint,
-                  gatewaySession === session,
-                  conversationGeneration == requestedGeneration else {
-                return
-            }
-            applySessionResult(result, preferredSessionID: nil)
-            sessionStatus = "Chat session ready"
-        } catch {
-            present(error)
-        }
-    }
-
-    private func ensureGatewaySession(forceBootstrapRefresh: Bool = false) async {
+    private func ensureAPIAvailable(forceBootstrapRefresh: Bool = false) async {
         await syncWithActiveConnection()
 
         if isConnecting {
-            connectionStatus = "Waiting for Hermes gateway..."
+            connectionStatus = "Waiting for Hermes API Server..."
             await waitForGatewayConnection()
-            if gatewaySession != nil {
+            if canUseNativeChat {
                 return
             }
         }
 
-        guard gatewaySession == nil else { return }
         let shouldRefreshBootstrap = forceBootstrapRefresh || bootstrapStatus?.canUseNativeChat == false
         await refreshBootstrapStatus(force: shouldRefreshBootstrap)
 
         guard canUseNativeChat else {
-            connectionStatus = "Native chat unavailable"
+            connectionStatus = "API server unavailable"
             return
         }
-        if isConnecting {
-            connectionStatus = "Waiting for Hermes gateway..."
-            await waitForGatewayConnection()
-            if gatewaySession != nil {
-                return
-            }
-        }
-        guard gatewaySession == nil else { return }
-        guard let connection = phoneStore?.activeConnection else { return }
-
-        isConnecting = true
-        defer { isConnecting = false }
-
-        connectionStatus = "Connecting to Hermes gateway..."
-        let session = HermesGatewaySSHSession(connection: connection, sshTransport: sshTransport)
-        gatewaySession = session
-        eventTask?.cancel()
-        eventTask = Task { [weak self] in
-            guard let self else { return }
-            for await event in session.events {
-                await self.apply(event)
-            }
-        }
-
-        do {
-            try await session.start()
-            connectionStatus = "Gateway connected"
-            appendDiagnostic("Gateway started successfully.")
-        } catch {
-            present(error)
-            await disconnectFromGateway(resetMessages: false)
-        }
+        connectionStatus = "API server ready"
     }
 
     private func waitForBootstrapProbe() async {
@@ -740,33 +671,30 @@ final class HermesNativeChatStore: ObservableObject {
         }
     }
 
-    private func disconnectFromGateway(resetMessages: Bool) async {
-        eventTask?.cancel()
-        eventTask = nil
-
-        if let gatewaySession {
-            await gatewaySession.close()
-        }
-        gatewaySession = nil
-
+    private func resetAPITransport(resetMessages: Bool) {
         if resetMessages {
             clearConversationState(keepDiagnostics: false)
         }
-
+        currentResponseID = nil
+        pendingAPIHistory = []
+        isContinuingRemoteSession = false
         connectionStatus = "Idle"
     }
 
-    private func closeActiveConversationIfNeeded(keepingGatewayWarm: Bool = false) async {
-        guard gatewaySession != nil || hasConversationContent else { return }
+    private func closeActiveConversationIfNeeded() async {
+        guard hasConversationContent else { return }
         isResumingSession = true
         sessionStatus = "Closing background chat..."
-        await closeChat(disconnectsGateway: !keepingGatewayWarm)
+        await closeChat()
     }
 
     private func clearConversationState(keepDiagnostics: Bool) {
         conversationGeneration += 1
         currentSessionID = nil
         currentAssistantMessageID = nil
+        currentResponseID = nil
+        pendingAPIHistory = []
+        isContinuingRemoteSession = false
         messages = []
         toolCards = []
         promptCards = []
@@ -903,6 +831,469 @@ final class HermesNativeChatStore: ObservableObject {
         messages.append(HermesChatMessage(role: .system, text: message))
     }
 
+    @discardableResult
+    private func applyAPIStreamEvent(_ event: HermesAPIStreamEvent) -> Bool {
+        rawEvents.append(
+            HermesGatewayEvent(
+                type: event.type,
+                sessionID: currentSessionID,
+                payload: event.payload.objectValue ?? ["payload": event.payload],
+                rawLine: event.payload.displayString
+            )
+        )
+        if rawEvents.count > 120 {
+            rawEvents.removeFirst(rawEvents.count - 120)
+        }
+
+        guard let object = event.payload.objectValue else { return false }
+        let eventType = apiEventType(from: object, fallback: event.type)
+
+        if applyGatewayCompatibleAPIEvent(eventType: eventType, object: object) {
+            return true
+        }
+
+        if let choice = object["choices"]?.arrayValue?.first?.objectValue,
+           let delta = choice["delta"]?.objectValue {
+            var handled = false
+            if let content = value(in: delta, keys: ["content", "text"]), !content.isEmpty {
+                if currentAssistantMessageID == nil {
+                    startAssistantMessage(with: [:])
+                }
+                appendAssistantDelta(from: ["delta": .string(content)])
+                sessionStatus = "Receiving response..."
+                handled = true
+            }
+            if let toolCalls = delta["tool_calls"]?.arrayValue {
+                for toolCall in toolCalls.compactMap(\.objectValue) {
+                    updateToolCard(for: normalizedChatToolPayload(toolCall), defaultRunning: true)
+                    handled = true
+                }
+                if handled {
+                    sessionStatus = "Running tool..."
+                }
+            }
+            if let finishReason = value(in: choice, keys: ["finish_reason"]), !finishReason.isEmpty {
+                completeAssistantMessage(from: [:])
+                sessionStatus = "Response completed"
+                handled = true
+            }
+            if handled { return true }
+        }
+
+        if eventType == "response.output_text.delta" || eventType == "response.text.delta" || eventType.localizedCaseInsensitiveContains("output_text.delta") {
+            guard let delta = value(in: object, keys: ["delta", "text", "content"]), !delta.isEmpty else { return false }
+            if currentAssistantMessageID == nil {
+                startAssistantMessage(with: [:])
+            }
+            appendAssistantDelta(from: ["delta": .string(delta)])
+            sessionStatus = "Receiving response..."
+            return true
+        }
+
+        if applyOpenAIToolStreamEvent(eventType: eventType, object: object) {
+            return true
+        }
+
+        if eventType == "response.completed" || eventType == "response.done" || eventType == "done" {
+            if let responsePayload = object["response"] {
+                if responsePayload.objectValue?["choices"] != nil {
+                    if currentAssistantMessageID == nil {
+                        applyChatCompletionResponse(HermesAPIChatCompletionResponse(payload: responsePayload, headers: [:]))
+                    }
+                } else {
+                    let response = HermesAPIResponse(payload: responsePayload)
+                    applyAPIResponseMetadata(response)
+                    for payload in response.toolPayloads {
+                        updateToolCard(for: payload, defaultRunning: false)
+                    }
+                }
+            }
+            completeRunningToolCards()
+            completeAssistantMessage(from: [:])
+            return true
+        }
+
+        if eventType == "response.failed" || eventType == "error" {
+            let message = value(in: object, keys: ["message", "error"]) ?? "Hermes API stream failed."
+            lastError = message
+            messages.append(HermesChatMessage(role: .error, text: message))
+            sessionStatus = "Chat error"
+            return true
+        }
+
+        return false
+    }
+
+    private func applyGatewayCompatibleAPIEvent(eventType: String, object: [String: JSONValue]) -> Bool {
+        let payload = gatewayPayload(from: object)
+        let event = HermesGatewayEvent(
+            type: eventType,
+            sessionID: gatewaySessionID(from: object),
+            payload: payload,
+            rawLine: JSONValue.object(object).displayString
+        )
+
+        switch eventType {
+        case "gateway.ready":
+            connectionStatus = "Gateway ready"
+            if let skin = value(in: payload, keys: ["skin", "name"]) {
+                gatewayInfo["Skin"] = skin
+            }
+            return true
+        case "session.info":
+            if let sessionID = event.sessionID ?? value(in: payload, keys: ["session_id", "id"]) {
+                currentSessionID = sessionID
+            }
+            if let model = value(in: payload, keys: ["model"]) {
+                gatewayInfo["Model"] = model
+            }
+            if let version = value(in: payload, keys: ["version", "gateway_version"]) {
+                gatewayInfo["Gateway"] = version
+            }
+            return true
+        case "message.start":
+            startAssistantMessage(with: payload)
+            return true
+        case "message.delta":
+            appendAssistantDelta(from: payload)
+            return true
+        case "message.complete":
+            completeAssistantMessage(from: payload)
+            return true
+        case "tool.start":
+            updateToolCard(for: payload, defaultRunning: true)
+            sessionStatus = "Running tool..."
+            return true
+        case "tool.progress":
+            updateToolCard(for: payload, defaultRunning: true)
+            sessionStatus = value(in: payload, keys: ["status", "message", "state"]) ?? "Running tool..."
+            return true
+        case "tool.complete":
+            updateToolCard(for: payload, defaultRunning: false)
+            sessionStatus = "Tool completed"
+            return true
+        case "approval.request":
+            upsertPromptCard(kind: .approval, payload: payload, fallbackSessionID: event.sessionID)
+            return true
+        case "clarify.request":
+            upsertPromptCard(kind: .clarify, payload: payload, fallbackSessionID: event.sessionID)
+            return true
+        case "sudo.request":
+            upsertPromptCard(kind: .sudo, payload: payload, fallbackSessionID: event.sessionID)
+            return true
+        case "secret.request":
+            upsertPromptCard(kind: .secret, payload: payload, fallbackSessionID: event.sessionID)
+            return true
+        case "status.update":
+            sessionStatus = value(in: payload, keys: ["text", "status", "message"]) ?? sessionStatus
+            return true
+        case "session.compacted", "context.compacted", "compaction.complete":
+            Task { @MainActor in await applyCompactionNotice(from: event) }
+            return true
+        case "error":
+            let message = value(in: payload, keys: ["message", "error"]) ?? "Unknown gateway error"
+            lastError = message
+            messages.append(HermesChatMessage(role: .error, text: message))
+            return true
+        case "gateway.stderr":
+            if let line = value(in: payload, keys: ["text"]) {
+                appendDiagnostic(line)
+            }
+            return true
+        case "gateway.closed":
+            connectionStatus = "Gateway closed"
+            return true
+        default:
+            if isCompactionEvent(event) {
+                Task { @MainActor in await applyCompactionNotice(from: event) }
+                return true
+            }
+            return false
+        }
+    }
+
+    private func applyOpenAIToolStreamEvent(eventType: String, object: [String: JSONValue]) -> Bool {
+        if eventType == "response.output_item.added" ||
+            eventType == "response.output_item.done" ||
+            eventType == "response.output_item.completed" {
+            guard var item = object["item"]?.objectValue else { return false }
+            let itemType = value(in: item, keys: ["type"]) ?? ""
+            guard isToolItemType(itemType) else { return false }
+            if item["item_id"] == nil, let itemID = object["item_id"] {
+                item["item_id"] = itemID
+            }
+            let completed = eventType != "response.output_item.added" && isCompletedToolPayload(item)
+            updateToolCard(for: item, defaultRunning: !completed)
+            sessionStatus = completed ? "Tool completed" : "Running tool..."
+            return true
+        }
+
+        guard isOpenAIToolProgressEvent(eventType) else { return false }
+        var payload = object
+        if payload["type"] == nil {
+            payload["type"] = .string(openAIToolType(from: eventType))
+        }
+        if payload["name"] == nil {
+            payload["name"] = .string(openAIToolName(from: eventType))
+        }
+        if payload["status"] == nil {
+            payload["status"] = .string(openAIToolStatus(from: eventType))
+        }
+        let completed = eventType.hasSuffix(".completed") || eventType.hasSuffix(".failed")
+        updateToolCard(for: payload, defaultRunning: !completed)
+        sessionStatus = completed ? "Tool completed" : "Running tool..."
+        return true
+    }
+
+    private func apiEventType(from object: [String: JSONValue], fallback: String) -> String {
+        if let eventType = value(in: object, keys: ["type", "event"]) {
+            return eventType
+        }
+        if let params = object["params"]?.objectValue,
+           let eventType = value(in: params, keys: ["type", "event"]) {
+            return eventType
+        }
+        return fallback
+    }
+
+    private func gatewaySessionID(from object: [String: JSONValue]) -> String? {
+        if let sessionID = value(in: object, keys: ["session_id"]) {
+            return sessionID
+        }
+        if let params = object["params"]?.objectValue,
+           let sessionID = value(in: params, keys: ["session_id"]) {
+            return sessionID
+        }
+        return currentSessionID
+    }
+
+    private func gatewayPayload(from object: [String: JSONValue]) -> [String: JSONValue] {
+        if let payload = object["payload"]?.objectValue {
+            return payload
+        }
+        if let params = object["params"]?.objectValue,
+           let payload = params["payload"]?.objectValue {
+            return payload
+        }
+        return object
+    }
+
+    private func isToolItemType(_ itemType: String) -> Bool {
+        guard itemType != "message", itemType != "reasoning" else { return false }
+        return itemType == "function_call" ||
+            itemType == "function_call_output" ||
+            itemType == "custom_tool_call" ||
+            itemType == "custom_tool_call_output" ||
+            itemType.hasSuffix("_call") ||
+            itemType.hasSuffix("_call_output")
+    }
+
+    private func isCompletedToolPayload(_ payload: [String: JSONValue]) -> Bool {
+        let itemType = value(in: payload, keys: ["type"]) ?? ""
+        if itemType.hasSuffix("_call_output") || itemType == "function_call_output" {
+            return true
+        }
+        let status = value(in: payload, keys: ["status", "state"])?.lowercased() ?? ""
+        return status == "completed" || status == "complete" || status == "failed"
+    }
+
+    private func isOpenAIToolProgressEvent(_ eventType: String) -> Bool {
+        eventType.hasPrefix("response.function_call_arguments.") ||
+            eventType.hasPrefix("response.custom_tool_call_input.") ||
+            eventType.hasPrefix("response.mcp_call_arguments.") ||
+            eventType.hasPrefix("response.web_search_call.") ||
+            eventType.hasPrefix("response.file_search_call.") ||
+            eventType.hasPrefix("response.code_interpreter_call.")
+    }
+
+    private func openAIToolType(from eventType: String) -> String {
+        if eventType.hasPrefix("response.web_search_call.") { return "web_search_call" }
+        if eventType.hasPrefix("response.file_search_call.") { return "file_search_call" }
+        if eventType.hasPrefix("response.code_interpreter_call.") { return "code_interpreter_call" }
+        if eventType.hasPrefix("response.mcp_call_arguments.") { return "mcp_call" }
+        if eventType.hasPrefix("response.custom_tool_call_input.") { return "custom_tool_call" }
+        return "function_call"
+    }
+
+    private func openAIToolName(from eventType: String) -> String {
+        openAIToolType(from: eventType)
+            .replacingOccurrences(of: "_", with: " ")
+            .capitalized
+    }
+
+    private func openAIToolStatus(from eventType: String) -> String {
+        if eventType.hasSuffix(".completed") { return "Complete" }
+        if eventType.hasSuffix(".failed") { return "Failed" }
+        if eventType.hasSuffix(".done") { return "Ready" }
+        if eventType.hasSuffix(".searching") { return "Searching" }
+        if eventType.hasSuffix(".interpreting") { return "Interpreting" }
+        return "Running"
+    }
+
+    private func completeRunningToolCards() {
+        let updatedAt = Date()
+        for index in toolCards.indices where toolCards[index].isRunning {
+            toolCards[index].isRunning = false
+            toolCards[index].status = "Complete"
+            toolCards[index].updatedAt = updatedAt
+        }
+    }
+
+    private func applyAPIResponseMetadata(_ response: HermesAPIResponse) {
+        if let responseID = response.id {
+            currentResponseID = responseID
+        }
+        if let model = response.model {
+            gatewayInfo["Model"] = model
+        }
+        if let status = response.status, !status.isEmpty {
+            sessionStatus = "Response \(status)"
+        } else {
+            sessionStatus = "Response completed"
+        }
+        Task { await phoneStore?.loadSessions() }
+    }
+
+    private func applyAPIResponse(_ response: HermesAPIResponse) {
+        rawEvents.append(
+            HermesGatewayEvent(
+                type: "api.response",
+                sessionID: currentSessionID,
+                payload: response.payload.objectValue ?? ["response": response.payload],
+                rawLine: response.payload.displayString
+            )
+        )
+        if rawEvents.count > 120 {
+            rawEvents.removeFirst(rawEvents.count - 120)
+        }
+
+        applyAPIResponseMetadata(response)
+
+        for payload in response.toolPayloads {
+            updateToolCard(for: payload, defaultRunning: false)
+        }
+
+        let text = response.assistantText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty {
+            appendSystemNotice("Hermes API Server returned no assistant text.")
+        } else {
+            startAssistantMessage(with: ["text": .string(text)])
+            completeAssistantMessage(from: [:])
+        }
+
+    }
+
+    private func applyChatCompletionResponse(_ response: HermesAPIChatCompletionResponse) {
+        rawEvents.append(
+            HermesGatewayEvent(
+                type: "api.chat_completion",
+                sessionID: currentSessionID,
+                payload: response.payload.objectValue ?? ["response": response.payload],
+                rawLine: response.payload.displayString
+            )
+        )
+        if rawEvents.count > 120 {
+            rawEvents.removeFirst(rawEvents.count - 120)
+        }
+
+        if let sessionID = response.sessionID, !sessionID.isEmpty {
+            currentSessionID = sessionID
+        }
+        if let model = response.model {
+            gatewayInfo["Model"] = model
+        }
+
+        for payload in response.toolPayloads {
+            updateToolCard(for: payload, defaultRunning: false)
+        }
+
+        let text = response.assistantText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty {
+            appendSystemNotice("Hermes API Server returned no assistant text.")
+        } else {
+            startAssistantMessage(with: ["text": .string(text)])
+            completeAssistantMessage(from: [:])
+        }
+
+        if let finishReason = response.finishReason, !finishReason.isEmpty {
+            sessionStatus = "Response \(finishReason)"
+        } else {
+            sessionStatus = "Response completed"
+        }
+        Task { await phoneStore?.loadSessions() }
+    }
+
+    private func applyTranscript(_ transcript: [SessionMessage]) {
+        let restored = transcript.compactMap { message -> HermesChatMessage? in
+            guard let content = message.content?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !content.isEmpty else {
+                return nil
+            }
+
+            let role: HermesChatMessageRole
+            switch message.role {
+            case .user:
+                role = .user
+            case .assistant:
+                role = .assistant
+            case .system:
+                role = .system
+            case .event, .custom:
+                return nil
+            }
+
+            return HermesChatMessage(
+                role: role,
+                text: content,
+                timestamp: message.timestamp?.dateValue ?? Date()
+            )
+        }
+
+        if !restored.isEmpty {
+            messages = restored
+        }
+    }
+
+    private func apiInput(forNewUserMessage message: String) -> JSONValue {
+        guard currentResponseID == nil, !pendingAPIHistory.isEmpty else {
+            return .string(message)
+        }
+
+        let historyItems = pendingAPIHistory.compactMap(apiInputMessage)
+        guard !historyItems.isEmpty else {
+            return .string(message)
+        }
+
+        return .array(historyItems + [
+            .object([
+                "role": .string("user"),
+                "content": .string(message)
+            ])
+        ])
+    }
+
+    private func apiInputMessage(from message: HermesChatMessage) -> JSONValue? {
+        let role: String
+        switch message.role {
+        case .user:
+            role = "user"
+        case .assistant:
+            role = "assistant"
+        case .system:
+            role = "system"
+        case .error:
+            return nil
+        }
+
+        let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+
+        return .object([
+            "role": .string(role),
+            "content": .string(text)
+        ])
+    }
+
     private func startAssistantMessage(with payload: [String: JSONValue]) {
         let initialText = value(in: payload, keys: ["text", "delta", "content"]) ?? ""
         let messageID = UUID()
@@ -954,9 +1345,29 @@ final class HermesNativeChatStore: ObservableObject {
         sessionStatus = "Response completed"
     }
 
+    private func normalizedChatToolPayload(_ payload: [String: JSONValue]) -> [String: JSONValue] {
+        var normalized = payload
+        if let function = payload["function"]?.objectValue {
+            if normalized["name"] == nil, let name = function["name"] {
+                normalized["name"] = name
+            }
+            if normalized["arguments"] == nil, let arguments = function["arguments"] {
+                normalized["arguments"] = arguments
+            }
+        }
+        if normalized["type"] == nil {
+            normalized["type"] = .string("function_call")
+        }
+        if normalized["status"] == nil {
+            normalized["status"] = .string("Running")
+        }
+        return normalized
+    }
+
     private func updateToolCard(for payload: [String: JSONValue], defaultRunning: Bool) {
-        let toolID = value(in: payload, keys: ["tool_call_id", "id", "tool_id", "name"]) ?? UUID().uuidString
-        let title = value(in: payload, keys: ["title", "name", "tool"]) ?? "Tool activity"
+        let toolID = value(in: payload, keys: ["tool_call_id", "call_id", "item_id", "id", "tool_id", "name"]) ?? UUID().uuidString
+        let incomingTitle = value(in: payload, keys: ["title", "name", "tool", "type"])
+        let title = incomingTitle ?? toolCards.first(where: { $0.id == toolID })?.title ?? fallbackToolTitle(from: payload)
         let status = value(in: payload, keys: ["status", "message", "state"]) ?? (defaultRunning ? "Running" : "Complete")
         let detail = value(in: payload, keys: ["detail", "summary", "output"])
         let isRunning = payload["running"]?.boolValue ?? defaultRunning
@@ -991,6 +1402,14 @@ final class HermesNativeChatStore: ObservableObject {
         if toolCards.count > 12 {
             toolCards.removeFirst(toolCards.count - 12)
         }
+    }
+
+    private func fallbackToolTitle(from payload: [String: JSONValue]) -> String {
+        let type = value(in: payload, keys: ["type"])
+        if type == "function_call_output" {
+            return "Tool output"
+        }
+        return "Tool activity"
     }
 
     private func upsertPromptCard(
@@ -1418,7 +1837,7 @@ private struct NativeChatContentView: View {
         if chatStore.isCheckingBootstrap || chatStore.bootstrapStatus == nil {
             ChatProgressStateView(
                 title: "Checking Hermes",
-                message: "Verifying SSH, Python, Hermes CLI, and the native chat gateway on this host."
+                message: "Verifying SSH access to Hermes API Server on this host."
             )
         } else if !chatStore.canUseNativeChat {
             NativeChatUnavailableView(chatStore: chatStore)
@@ -1785,7 +2204,7 @@ private struct ChatStatusHeader: View {
         if chatStore.isCheckingBootstrap || chatStore.bootstrapStatus == nil {
             return "Checking"
         }
-        return chatStore.canUseNativeChat ? "Native" : "Unavailable"
+        return chatStore.canUseNativeChat ? "API" : "Unavailable"
     }
 
     private var availabilityColor: Color {
@@ -1801,9 +2220,9 @@ private struct NativeChatUnavailableView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Native chat is not available on this host yet.")
+            Text("Hermes API Server is not available on this host yet.")
                 .font(.headline)
-            Text(chatStore.fallbackReason ?? "HermesPhone will keep the terminal available as fallback.")
+            Text(chatStore.fallbackReason ?? "Start `hermes gateway` with API_SERVER_ENABLED=true, then retry.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -1903,7 +2322,8 @@ private struct ConversationResumeLoadingView: View {
                 !status.isEmpty &&
                     status != "Idle" &&
                     status != "No active chat session" &&
-                    status != "Ready for native chat"
+                    status != "Ready for native chat" &&
+                    status != "API server ready"
             }
         if let liveStatus {
             return liveStatus
@@ -2173,12 +2593,16 @@ private struct ToolActivityTickerView: View {
     @Binding var isExpanded: Bool
     let onDismiss: () -> Void
     @State private var dragOffset: CGFloat = 0
+    @State private var isDismissing = false
     @State private var isTouchTracking = false
     @State private var hasCancelledPressExpansion = false
     @State private var pressExpansionTask: Task<Void, Never>?
 
     private static let expansionDelayNanoseconds: UInt64 = 650_000_000
     private static let expansionMovementTolerance: CGFloat = 18
+    private static let dismissThreshold: CGFloat = 90
+    private static let dismissTravel: CGFloat = 520
+    private static let dismissAnimationDuration: TimeInterval = 0.24
 
     var body: some View {
         HStack(spacing: 12) {
@@ -2223,6 +2647,8 @@ private struct ToolActivityTickerView: View {
                 .stroke(Color.white.opacity(0.16))
         )
         .offset(x: dragOffset)
+        .opacity(isDismissing ? 0 : 1)
+        .allowsHitTesting(!isDismissing)
         .gesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { value in
@@ -2236,14 +2662,8 @@ private struct ToolActivityTickerView: View {
                 }
                 .onEnded { value in
                     endTickerPress()
-                    if value.translation.width > 90 {
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
-                            dragOffset = 220
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                            onDismiss()
-                            dragOffset = 0
-                        }
+                    if value.translation.width > Self.dismissThreshold {
+                        dismissTowardTrailingEdge()
                     } else {
                         withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
                             dragOffset = 0
@@ -2261,6 +2681,18 @@ private struct ToolActivityTickerView: View {
                     .foregroundStyle(.secondary)
                     .padding(.trailing, 14)
             }
+        }
+    }
+
+    private func dismissTowardTrailingEdge() {
+        guard !isDismissing else { return }
+        isDismissing = true
+        cancelPendingPressExpansion()
+        withAnimation(.easeOut(duration: Self.dismissAnimationDuration)) {
+            dragOffset = Self.dismissTravel
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.dismissAnimationDuration) {
+            onDismiss()
         }
     }
 

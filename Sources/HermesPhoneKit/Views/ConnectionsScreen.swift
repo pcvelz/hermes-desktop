@@ -15,7 +15,8 @@ struct ConnectionsScreen: View {
     @State private var editingConnectionID: UUID?
     @State private var chatTestResult: String?
     @State private var isTestingChat = false
-    @State private var showsGatewayDiagnostics = false
+    @State private var showsConnectionGuide = true
+    @State private var showsAPIDiagnostics = false
 
     var body: some View {
         List {
@@ -25,21 +26,63 @@ struct ConnectionsScreen: View {
                     .listRowBackground(Color.clear)
             }
 
+            connectionGuideSection
+
             nativeChatSection
 
-            Section("Saved Connections") {
+            Section("Hosts") {
                 if store.connections.isEmpty {
-                    ContentUnavailableView("No Connections", systemImage: "server.rack", description: Text("Add an SSH connection to start using Hermes on iPhone."))
+                    ContentUnavailableView("No Hosts", systemImage: "server.rack", description: Text("Add your Hermes host, then add one or more profiles inside it."))
                 } else {
-                    ForEach(store.connections) { connection in
-                        connectionRow(connection)
-                            .swipeActions {
-                                Button(role: .destructive) {
-                                    store.removeConnection(connection)
+                    ForEach(savedConnectionGroups) { group in
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Image(systemName: "server.rack")
+                                    .foregroundStyle(.secondary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(group.title)
+                                        .font(.subheadline.weight(.semibold))
+                                    Text("\(group.connections.count) Hermes \(group.connections.count == 1 ? "profile" : "profiles")")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if store.activeHostFingerprint == group.id {
+                                    Text("Active Host")
+                                        .font(.caption.weight(.semibold))
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(Color.green.opacity(0.15), in: Capsule())
+                                } else {
+                                    Button("Use Host") {
+                                        store.activateHost(group.id)
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+                                Button {
+                                    addProfile(to: group)
                                 } label: {
-                                    Label("Delete", systemImage: "trash")
+                                    Label("Add Profile", systemImage: "plus")
+                                        .labelStyle(.iconOnly)
+                                }
+                                .buttonStyle(.borderless)
+                            }
+
+                            ForEach(group.connections) { connection in
+                                connectionRow(connection)
+                                    .swipeActions {
+                                        Button(role: .destructive) {
+                                            store.removeConnection(connection)
+                                        } label: {
+                                            Label("Delete", systemImage: "trash")
+                                        }
+                                    }
+                                if connection.id != group.connections.last?.id {
+                                    Divider()
                                 }
                             }
+                        }
+                        .padding(.vertical, 4)
                     }
                 }
             }
@@ -51,7 +94,7 @@ struct ConnectionsScreen: View {
                 draft = ConnectionDraft()
                 isPresentingEditor = true
             } label: {
-                Image(systemName: "plus")
+                Label("Add Host", systemImage: "plus")
             }
         }
         .sheet(isPresented: $isPresentingEditor) {
@@ -83,17 +126,23 @@ struct ConnectionsScreen: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Text(connection.resolvedHermesProfileName)
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(Color.green.opacity(0.16), in: Capsule())
+                        VStack(alignment: .trailing, spacing: 4) {
+                            Text(connection.resolvedHermesProfileName)
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.green.opacity(0.16), in: Capsule())
+                            Text(connection.displayProfileScope)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                     }
 
                     if let overview = store.overview {
                         VStack(alignment: .leading, spacing: 8) {
                             workspaceMetric(label: "Remote Home", value: overview.remoteHome)
                             workspaceMetric(label: "Hermes Home", value: overview.hermesHome)
+                            workspaceMetric(label: "Chat", value: connection.displayAPIServerEndpoint)
                             workspaceMetric(label: "Session Store", value: overview.sessionStore?.path ?? "Not found")
                             workspaceMetric(label: "Profiles", value: overview.availableProfiles.map(\.name).joined(separator: " · "))
                         }
@@ -117,28 +166,25 @@ struct ConnectionsScreen: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(connection.label)
                         .font(.headline)
-                    Text(connection.displayDestination)
+                    Text(connection.resolvedHermesProfileName)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    Text(connection.resolvedHermesProfileName)
+                    Text(chatAPIPortSummary(for: connection))
                         .font(.caption)
                         .foregroundStyle(.tertiary)
+                    Text(".env: \(connection.remoteHermesHomePath)/.env")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
                 }
                 Spacer()
-                if store.activeConnectionID == connection.id {
-                    Text("Active")
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.green.opacity(0.15), in: Capsule())
-                }
             }
 
             HStack(spacing: 10) {
-                Button("Use") {
+                Button("Select") {
                     store.activateConnection(connection)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
 
                 Button("Edit") {
                     editingConnectionID = connection.id
@@ -162,26 +208,67 @@ struct ConnectionsScreen: View {
         }
     }
 
+    private var connectionGuideSection: some View {
+        Section {
+            DisclosureGroup(isExpanded: $showsConnectionGuide) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Prima ti colleghi via SSH. Terminale e Files funzionano già. Questi passi servono solo se vuoi usare la chat direttamente dall'app.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    if let connection = store.activeConnection {
+                        ConnectionsGuideStep(title: "1. Apri il .env del profilo", detail: "\(connection.remoteHermesHomePath)/.env. Puoi modificarlo da Files o dal Terminale dell'app.")
+                        connectionsCodeBlock(envSnippet(for: connection))
+                        ConnectionsGuideStep(title: "2. Usa gli stessi valori nell'app", detail: "Per \(connection.resolvedHermesProfileName), salva Chat Port \(connection.resolvedAPIServerPort). Se API_SERVER_KEY è vuota, lascia vuota anche la Chat Key.")
+                        ConnectionsGuideStep(title: "3. Riavvia Hermes per quel profilo", detail: restartGuidance(for: connection))
+                    } else {
+                        ConnectionsGuideStep(title: "1. Aggiungi un host", detail: "Inserisci host, porta SSH e utente. È abbastanza per usare Terminale e Files.")
+                        ConnectionsGuideStep(title: "2. Aggiungi un profilo Hermes", detail: "Default usa ~/.hermes/.env. Un profilo chiamato work usa ~/.hermes/profiles/work/.env.")
+                        connectionsCodeBlock(genericEnvSnippet)
+                        ConnectionsGuideStep(title: "3. Usa gli stessi valori nell'app", detail: "Per ogni profilo con cui vuoi chattare, porta e key devono combaciare tra .env e app.")
+                    }
+
+                    Text("Sicuro: lascia API_SERVER_HOST su 127.0.0.1. La chat passa tramite SSH e non rende pubblico nulla.")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    Text("Più profili attivi insieme? Dai a ciascuno una porta diversa, ad esempio 8642, 8643, 8644.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 8)
+            } label: {
+                Label("Chat setup in 3 steps", systemImage: "questionmark.circle")
+                    .font(.subheadline.weight(.semibold))
+            }
+        }
+    }
+
     private var nativeChatSection: some View {
-        Section("Native Chat") {
+        Section("Chat status") {
             if let bootstrap = store.nativeChatStore.bootstrapStatus {
                 DetailRow(label: "SSH", value: bootstrap.sshConnected ? "Connected" : "Unavailable")
-                DetailRow(label: "Python", value: bootstrap.pythonAvailable ? "Available" : "Unavailable")
-                DetailRow(label: "Hermes CLI", value: bootstrap.hermesCLIAvailable ? "Available" : "Unavailable")
-                DetailRow(label: "TUI Gateway", value: bootstrap.tuiGatewayAvailable ? "Available" : "Unavailable")
-                if let version = bootstrap.hermesVersion {
-                    DetailRow(label: "Hermes Version", value: version)
-                }
+                DetailRow(label: "Chat", value: bootstrap.apiServerAvailable ? "Ready" : "Needs setup")
+                DetailRow(label: "Chat Key", value: bootstrap.apiAuthenticated ? "OK" : "Check if you set one")
+                DetailRow(label: "Chat Port", value: String(bootstrap.apiServerPort))
                 if let fallbackReason = bootstrap.fallbackReason {
-                    DetailRow(label: "Fallback", value: fallbackReason)
+                    DetailRow(label: "What to check", value: fallbackReason)
                 }
             } else {
                 HStack {
                     ProgressView()
                         .controlSize(.small)
-                    Text("Checking native chat support...")
+                    Text("Checking chat API...")
                         .foregroundStyle(.secondary)
                 }
+            }
+
+            Button {
+                Task {
+                    await store.nativeChatStore.refreshBootstrapStatus(force: true)
+                }
+            } label: {
+                Label("Refresh chat status", systemImage: "arrow.clockwise")
             }
 
             Button {
@@ -196,7 +283,7 @@ struct ConnectionsScreen: View {
                         ProgressView()
                             .controlSize(.small)
                     }
-                    Text(isTestingChat ? "Testing Chat..." : "Test Chat")
+                    Text(isTestingChat ? "Testing chat..." : "Test chat")
                 }
             }
             .disabled(isTestingChat || !store.nativeChatStore.canUseNativeChat)
@@ -207,9 +294,9 @@ struct ConnectionsScreen: View {
                     .foregroundStyle(.secondary)
             }
 
-            DisclosureGroup("Diagnostics", isExpanded: $showsGatewayDiagnostics) {
+            DisclosureGroup("Diagnostics", isExpanded: $showsAPIDiagnostics) {
                 if store.nativeChatStore.rawEvents.isEmpty {
-                    Text("No gateway events captured yet.")
+                    Text("No API events captured yet.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 } else {
@@ -227,6 +314,109 @@ struct ConnectionsScreen: View {
             }
         }
     }
+
+    private func chatAPIPortSummary(for connection: ConnectionProfile) -> String {
+        if connection.hasExplicitAPIServerPort {
+            return "Chat Port \(connection.resolvedAPIServerPort)"
+        }
+        return "Chat Port \(connection.resolvedAPIServerPort) (default)"
+    }
+
+    private func envSnippet(for connection: ConnectionProfile) -> String {
+        """
+        API_SERVER_ENABLED=true
+        API_SERVER_PORT=\(connection.resolvedAPIServerPort)
+        API_SERVER_HOST=127.0.0.1
+        API_SERVER_KEY=
+        """
+    }
+
+    private var genericEnvSnippet: String {
+        """
+        API_SERVER_ENABLED=true
+        API_SERVER_PORT=8642
+        API_SERVER_HOST=127.0.0.1
+        API_SERVER_KEY=
+        """
+    }
+
+    private func restartGuidance(for connection: ConnectionProfile) -> String {
+        if let customHermesHomePath = connection.trimmedCustomHermesHomePath {
+            return "Dopo aver salvato .env, riavvia Hermes usando la home \(customHermesHomePath)."
+        }
+        if let profileName = connection.trimmedHermesProfile {
+            return "Dopo aver salvato .env, riavvia Hermes usando il profilo \(profileName)."
+        }
+        return "Dopo aver salvato .env, riavvia Hermes usando il profilo default."
+    }
+
+    private func connectionsCodeBlock(_ value: String) -> some View {
+        Text(value)
+            .font(.caption.monospaced())
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(Color(.tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private var savedConnectionGroups: [ConnectionHostGroup] {
+        let grouped = Dictionary(grouping: store.connections, by: \.hostConnectionFingerprint)
+        return grouped.values.map { connections in
+            let sortedConnections = connections.sorted {
+                if $0.resolvedHermesProfileName == $1.resolvedHermesProfileName {
+                    return $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending
+                }
+                return $0.resolvedHermesProfileName.localizedCaseInsensitiveCompare($1.resolvedHermesProfileName) == .orderedAscending
+            }
+            let first = sortedConnections[0]
+            return ConnectionHostGroup(
+                id: first.hostConnectionFingerprint,
+                title: first.displayDestination,
+                connections: sortedConnections
+            )
+        }
+        .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+    }
+
+    private func addProfile(to group: ConnectionHostGroup) {
+        guard let base = group.connections.first else { return }
+        let credential = (try? store.credential(for: base)) ?? SSHCredentialRecord()
+        editingConnectionID = nil
+        draft = ConnectionDraft(profileTemplateFrom: base, credential: credential, apiServerPort: nextAPIPort(in: group))
+        isPresentingEditor = true
+    }
+
+    private func nextAPIPort(in group: ConnectionHostGroup) -> Int {
+        let usedPorts = Set(group.connections.compactMap { $0.hasExplicitAPIServerPort ? $0.resolvedAPIServerPort : nil })
+        var candidate = 8642
+        while usedPorts.contains(candidate) {
+            candidate += 1
+        }
+        return candidate
+    }
+}
+
+private struct ConnectionsGuideStep: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.footnote.weight(.semibold))
+            Text(detail)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct ConnectionHostGroup: Identifiable {
+    let id: String
+    let title: String
+    let connections: [ConnectionProfile]
 }
 
 #endif

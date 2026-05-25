@@ -419,6 +419,11 @@ struct ActiveWorkspaceStrip: View {
                                     }
                                     Text(profile.name)
                                         .lineLimit(1)
+                                    if store.configuredProfileConnectionForActiveHost(named: profile.name)?.hasExplicitAPIServerPort == false {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .font(.caption2)
+                                            .foregroundStyle(.yellow)
+                                    }
                                 }
                                 .font(.caption.weight(.semibold))
                                 .padding(.horizontal, 12)
