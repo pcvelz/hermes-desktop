@@ -1,7 +1,7 @@
 {
   "name": "hermes-desktop-tauri",
   "private": true,
-  "version": "0.10.0-tauri.0",
+  "version": "0.10.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:build": "tauri build --ci",
-    "tauri:build:linux": "tauri build --ci --bundles deb,rpm",
+    "tauri:build:linux": "tauri build --ci --bundles deb,rpm,appimage",
     "tauri:build:macos": "tauri build --ci --bundles dmg",
     "tauri:build:windows": "tauri build --ci --bundles msi,nsis"
   },

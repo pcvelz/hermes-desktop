@@ -14,4 +14,5 @@ sudo apt-get install -y \
     libayatana-appindicator3-dev \
     librsvg2-dev \
     libdbus-1-dev \
-    patchelf
+    patchelf \
+    libfuse2
