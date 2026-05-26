@@ -11,7 +11,6 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     var sshUser: String
     var hermesProfile: String?
     var customHermesHomePath: String?
-    var apiServerPort: Int?
     var authKind: SSHCredentialKind
     var createdAt: Date
     var updatedAt: Date
@@ -26,7 +25,6 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
         sshUser: String = "",
         hermesProfile: String? = nil,
         customHermesHomePath: String? = nil,
-        apiServerPort: Int? = nil,
         authKind: SSHCredentialKind = .password,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
@@ -40,7 +38,6 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
         self.sshUser = sshUser
         self.hermesProfile = hermesProfile
         self.customHermesHomePath = customHermesHomePath
-        self.apiServerPort = apiServerPort
         self.authKind = authKind
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -108,16 +105,6 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
         return "~/.hermes"
     }
 
-    var resolvedAPIServerPort: Int {
-        guard let apiServerPort, apiServerPort > 0 else { return 8642 }
-        return apiServerPort
-    }
-
-    var hasExplicitAPIServerPort: Bool {
-        guard let apiServerPort else { return false }
-        return apiServerPort > 0
-    }
-
     var remoteSkillsPath: String {
         "\(remoteHermesHomePath)/skills"
     }
@@ -134,11 +121,6 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
             return "Default profile"
         }
         return "Named profile"
-    }
-
-    var displayAPIServerEndpoint: String {
-        guard hasExplicitAPIServerPort else { return "Not set" }
-        return "127.0.0.1:\(resolvedAPIServerPort)"
     }
 
     var remoteKanbanHomePath: String {
@@ -237,8 +219,7 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
             effectiveTarget,
             trimmedUser ?? "",
             resolvedPort.map(String.init) ?? "",
-            remoteHermesHomePath,
-            String(resolvedAPIServerPort)
+            remoteHermesHomePath
         ].joined(separator: "|")
     }
 
@@ -344,9 +325,6 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
         copy.customHermesHomePath = trimmedCustomHermesHomePath
         if let sshPort = sshPort, sshPort <= 0 {
             copy.sshPort = nil
-        }
-        if let apiServerPort = apiServerPort, apiServerPort <= 0 {
-            copy.apiServerPort = nil
         }
         copy.updatedAt = Date()
         return copy

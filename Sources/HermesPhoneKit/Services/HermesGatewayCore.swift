@@ -34,10 +34,6 @@ struct HermesChatBootstrapStatus: Equatable, Sendable {
     var hermesCLIAvailable = false
     var hermesVersion: String?
     var tuiGatewayAvailable = false
-    var apiServerAvailable = false
-    var apiAuthenticated = false
-    var apiServerPort = 8642
-    var apiModel: String?
     var canUseNativeChat = false
     var fallbackReason: String?
 }
@@ -604,7 +600,7 @@ struct HermesNativeChatCapabilityProbe {
 
 extension SSHTransport {
     func probeNativeChatAvailability(on connection: ConnectionProfile) async -> HermesChatBootstrapStatus {
-        var status = HermesChatBootstrapStatus(apiServerPort: connection.resolvedAPIServerPort)
+        var status = HermesChatBootstrapStatus()
 
         do {
             let probe = try await execute(

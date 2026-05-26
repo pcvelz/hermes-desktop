@@ -65,20 +65,7 @@ final class HermesPhoneStore: ObservableObject {
 
     var activeConnection: ConnectionProfile? {
         guard let activeHostFingerprint else { return nil }
-        let hostConnections = connectionsForActiveHost
-        guard !hostConnections.isEmpty else { return nil }
-
-        if let selectedProfileName = activeProfileNameByHost[activeHostFingerprint],
-           let selectedConnection = hostConnections.first(where: { $0.resolvedHermesProfileName == selectedProfileName }) {
-            return selectedConnection
-        }
-
-        if let legacyActiveConnection = connections.first(where: { $0.id == activeConnectionID }),
-           legacyActiveConnection.hostConnectionFingerprint == activeHostFingerprint {
-            return legacyActiveConnection
-        }
-
-        return hostConnections.first(where: \.usesDefaultHermesProfile) ?? hostConnections[0]
+        return connectionForHost(fingerprint: activeHostFingerprint)
     }
 
     var activeHostConnections: [ConnectionProfile] {
@@ -98,7 +85,9 @@ final class HermesPhoneStore: ObservableObject {
     }
 
     var availableProfiles: [RemoteHermesProfile] {
-        let configuredProfiles = activeHostConnections.map {
+        var profiles = overview?.availableProfiles ?? []
+
+        let localProfiles = (activeHostConnections + [activeConnection].compactMap { $0 }).map {
             RemoteHermesProfile(
                 name: $0.resolvedHermesProfileName,
                 path: $0.remoteHermesHomePath,
@@ -107,18 +96,16 @@ final class HermesPhoneStore: ObservableObject {
             )
         }
 
-        if let overview, !overview.availableProfiles.isEmpty {
-            var profiles = overview.availableProfiles
-            for configuredProfile in configuredProfiles
-            where !profiles.contains(where: { $0.name == configuredProfile.name }) {
-                profiles.append(configuredProfile)
+        for localProfile in localProfiles where !profiles.contains(where: { $0.name == localProfile.name }) {
+            profiles.append(localProfile)
+        }
+
+        return profiles.sorted { lhs, rhs in
+            if lhs.isDefault != rhs.isDefault {
+                return lhs.isDefault
             }
-            return profiles
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
         }
-        if !configuredProfiles.isEmpty {
-            return configuredProfiles
-        }
-        return []
     }
 
     private var connectionsForActiveHost: [ConnectionProfile] {
@@ -182,7 +169,11 @@ final class HermesPhoneStore: ObservableObject {
         updatedConnections.sort { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
         connections = updatedConnections
         if makeActive {
+            let selectedProfileName = activeHostFingerprint.flatMap { activeProfileNameByHost[$0] }
             selectProfileConnection(normalized)
+            if let selectedProfileName, normalized.usesDefaultHermesProfile {
+                activeProfileNameByHost[normalized.hostConnectionFingerprint] = selectedProfileName
+            }
             markSessionsPendingLoadIfNeeded()
         } else if normalized.hostConnectionFingerprint == activeHostFingerprint,
                   normalized.resolvedHermesProfileName == activeProfileNameByHost[normalized.hostConnectionFingerprint] {
@@ -252,11 +243,7 @@ final class HermesPhoneStore: ObservableObject {
 
     func configuredProfileConnectionForActiveHost(named profileName: String) -> ConnectionProfile? {
         guard let activeHostFingerprint else { return nil }
-        return connections.first {
-            $0.hostConnectionFingerprint == activeHostFingerprint &&
-                !$0.usesCustomHermesHome &&
-                $0.resolvedHermesProfileName == profileName
-        }
+        return profileConnection(forHost: activeHostFingerprint, profileName: profileName)
     }
 
     func switchHermesProfile(to profileName: String) async {
@@ -267,17 +254,13 @@ final class HermesPhoneStore: ObservableObject {
             return
         }
 
-        guard let matchingConnection = connections.first(where: {
-            $0.hostConnectionFingerprint == activeHostFingerprint &&
-                !$0.usesCustomHermesHome &&
-                $0.resolvedHermesProfileName == profileName
-        }) else {
-            present(SSHTransportError.invalidConnection("Add \(profileName) under this host in Connections before switching to it."))
+        guard let profileConnection = profileConnection(forHost: activeHostFingerprint, profileName: profileName) else {
+            present(SSHTransportError.invalidConnection("Choose a saved host before switching profiles."))
             return
         }
 
-        selectProfileConnection(matchingConnection)
-        if previousWorkspaceFingerprint != matchingConnection.workspaceScopeFingerprint {
+        selectProfileConnection(profileConnection)
+        if previousWorkspaceFingerprint != profileConnection.workspaceScopeFingerprint {
             markSessionsPendingLoadIfNeeded()
             cronJobs = []
             skills = []
@@ -285,7 +268,7 @@ final class HermesPhoneStore: ObservableObject {
             skillsError = nil
             directoryListing = nil
             fileEditor = nil
-            activeDirectoryPath = matchingConnection.remoteHermesHomePath
+            activeDirectoryPath = profileConnection.remoteHermesHomePath
             overview = nil
             persistConnections()
         }
@@ -769,13 +752,48 @@ final class HermesPhoneStore: ObservableObject {
     }
 
     private func connectionForHost(fingerprint: String) -> ConnectionProfile? {
-        let hostConnections = connections.filter { $0.hostConnectionFingerprint == fingerprint }
-        guard !hostConnections.isEmpty else { return nil }
         if let selectedProfileName = activeProfileNameByHost[fingerprint],
-           let selectedConnection = hostConnections.first(where: { $0.resolvedHermesProfileName == selectedProfileName }) {
+           let selectedConnection = profileConnection(forHost: fingerprint, profileName: selectedProfileName) {
             return selectedConnection
         }
+
+        let hostConnections = sortedConnections(forHost: fingerprint)
+        guard !hostConnections.isEmpty else { return nil }
+
+        if let legacyActiveConnection = connections.first(where: { $0.id == activeConnectionID }),
+           legacyActiveConnection.hostConnectionFingerprint == fingerprint {
+            return legacyActiveConnection
+        }
+
         return hostConnections.first(where: \.usesDefaultHermesProfile) ?? hostConnections[0]
+    }
+
+    private func profileConnection(forHost fingerprint: String, profileName: String) -> ConnectionProfile? {
+        let trimmedProfileName = profileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedProfileName.isEmpty else { return nil }
+
+        let hostConnections = sortedConnections(forHost: fingerprint)
+        if let configuredCustomConnection = hostConnections.first(where: {
+            $0.usesCustomHermesHome && $0.resolvedHermesProfileName == trimmedProfileName
+        }) {
+            return configuredCustomConnection
+        }
+
+        guard let baseConnection = hostConnections.first(where: \.usesDefaultHermesProfile) ?? hostConnections.first else {
+            return nil
+        }
+        return baseConnection.applyingHermesProfile(named: trimmedProfileName)
+    }
+
+    private func sortedConnections(forHost fingerprint: String) -> [ConnectionProfile] {
+        connections
+            .filter { $0.hostConnectionFingerprint == fingerprint }
+            .sorted { lhs, rhs in
+                if lhs.usesDefaultHermesProfile != rhs.usesDefaultHermesProfile {
+                    return lhs.usesDefaultHermesProfile
+                }
+                return lhs.resolvedHermesProfileName.localizedCaseInsensitiveCompare(rhs.resolvedHermesProfileName) == .orderedAscending
+            }
     }
 
     private func persistenceURL() throws -> URL {

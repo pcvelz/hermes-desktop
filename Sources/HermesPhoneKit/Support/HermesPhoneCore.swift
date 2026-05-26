@@ -35,7 +35,6 @@ struct SSHCredentialRecord: Codable, Equatable, Sendable {
     var password: String?
     var privateKey: String?
     var passphrase: String?
-    var apiServerKey: String?
 }
 
 struct SSHCommandResult: Sendable {

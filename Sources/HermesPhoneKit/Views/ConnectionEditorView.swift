@@ -13,8 +13,6 @@ struct ConnectionDraft {
     var host = ""
     var port = "22"
     var user = ""
-    var hermesProfile = ""
-    var customHermesHomePath = ""
     var authKind: SSHCredentialKind = .password
     var password = ""
     var privateKey = ""
@@ -27,21 +25,6 @@ struct ConnectionDraft {
         host = connection.sshHost
         port = connection.sshPort.map(String.init) ?? "22"
         user = connection.sshUser
-        hermesProfile = connection.hermesProfile ?? ""
-        customHermesHomePath = connection.customHermesHomePath ?? ""
-        authKind = connection.authKind
-        password = credential.password ?? ""
-        privateKey = credential.privateKey ?? ""
-        passphrase = credential.passphrase ?? ""
-    }
-
-    init(profileTemplateFrom connection: ConnectionProfile, credential: SSHCredentialRecord) {
-        label = ""
-        host = connection.sshHost
-        port = connection.sshPort.map(String.init) ?? "22"
-        user = connection.sshUser
-        hermesProfile = ""
-        customHermesHomePath = ""
         authKind = connection.authKind
         password = credential.password ?? ""
         privateKey = credential.privateKey ?? ""
@@ -51,13 +34,13 @@ struct ConnectionDraft {
     func makeProfile(existingID: UUID?) -> ConnectionProfile {
         ConnectionProfile(
             id: existingID ?? UUID(),
-            label: label,
+            label: label.nilIfBlank ?? host.nilIfBlank ?? "Hermes Host",
             sshAlias: "",
             sshHost: host,
             sshPort: Int(port),
             sshUser: user,
-            hermesProfile: hermesProfile.nilIfBlank,
-            customHermesHomePath: customHermesHomePath.nilIfBlank,
+            hermesProfile: nil,
+            customHermesHomePath: nil,
             authKind: authKind
         )
     }
@@ -70,35 +53,6 @@ struct ConnectionDraft {
         )
     }
 
-    var trimmedHermesProfile: String? {
-        guard let value = hermesProfile.nilIfBlank else { return nil }
-        guard value.caseInsensitiveCompare("default") != .orderedSame else { return nil }
-        return value
-    }
-
-    var trimmedCustomHermesHomePath: String? {
-        guard var value = customHermesHomePath.nilIfBlank else { return nil }
-        if value == "~/" {
-            return "~"
-        }
-        while value.count > 1, value.hasSuffix("/") {
-            value.removeLast()
-        }
-        return value
-    }
-
-    var resolvedHermesProfileName: String {
-        if let trimmedCustomHermesHomePath {
-            return customHermesHomeDisplayName(trimmedCustomHermesHomePath)
-        }
-        return trimmedHermesProfile ?? "default"
-    }
-
-    private func customHermesHomeDisplayName(_ path: String) -> String {
-        let normalized = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let last = normalized.split(separator: "/").last else { return "custom" }
-        return String(last)
-    }
 }
 
 struct ConnectionEditorView: View {
@@ -112,6 +66,7 @@ struct ConnectionEditorView: View {
     var body: some View {
         Form {
             Section("Host") {
+                TextField("Display Name", text: $draft.label)
                 TextField("Host or IP", text: $draft.host)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -121,21 +76,9 @@ struct ConnectionEditorView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
 
-                Text("Inserisci il Mac o server a cui ti colleghi via SSH. Terminale e Files funzionano già con questi dati.")
+                Text("Add the SSH host once. Hermes profiles on this host are discovered automatically after connection.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-            }
-
-            Section("Hermes Profile") {
-                TextField("Display Name", text: $draft.label)
-                TextField("Hermes Profile Name", text: $draft.hermesProfile)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                TextField("Custom Hermes Home", text: $draft.customHermesHomePath)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-
-                profileScopeHelp
             }
 
             Section("Authentication") {
@@ -189,10 +132,13 @@ struct ConnectionEditorView: View {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save") {
                     let profile = draft.makeProfile(existingID: editingConnectionID)
+                    let editsActiveHost = editingConnectionID.map { editedID in
+                        store.activeHostConnections.contains { $0.id == editedID }
+                    } ?? false
                     store.saveConnection(
                         profile: profile,
                         credential: draft.credential,
-                        makeActive: store.activeConnectionID == nil || editingConnectionID == store.activeConnectionID
+                        makeActive: store.activeConnectionID == nil || editingConnectionID == store.activeConnectionID || editsActiveHost
                     )
                     dismiss()
                 }
@@ -202,26 +148,9 @@ struct ConnectionEditorView: View {
 
     private var editorTitle: String {
         if editingConnectionID != nil {
-            return "Edit Profile"
+            return "Edit Host"
         }
-        return draft.host.nilIfBlank == nil ? "New Host" : "New Profile"
-    }
-
-    @ViewBuilder
-    private var profileScopeHelp: some View {
-        if let customHermesHomePath = draft.trimmedCustomHermesHomePath {
-            Text("Usa la home Hermes \(customHermesHomePath). Lascia vuoto Hermes Profile Name quando usi una home personalizzata.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        } else if let hermesProfile = draft.trimmedHermesProfile {
-            Text("Usa il profilo Hermes \(hermesProfile). Il suo file di configurazione è ~/.hermes/profiles/\(hermesProfile)/.env.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        } else {
-            Text("Usa il profilo default. Il suo file di configurazione è ~/.hermes/.env.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
+        return "New Host"
     }
 
 }

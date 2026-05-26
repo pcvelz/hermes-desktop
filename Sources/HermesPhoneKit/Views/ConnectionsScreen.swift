@@ -15,7 +15,7 @@ struct ConnectionsScreen: View {
     @State private var editingConnectionID: UUID?
     @State private var chatTestResult: String?
     @State private var isTestingChat = false
-    @State private var showsConnectionGuide = true
+    @State private var showsConnectionGuide = false
     @State private var showsGatewayDiagnostics = false
 
     var body: some View {
@@ -26,66 +26,9 @@ struct ConnectionsScreen: View {
                     .listRowBackground(Color.clear)
             }
 
-            connectionGuideSection
-
+            savedHostsSection
             nativeChatSection
-
-            Section("Hosts") {
-                if store.connections.isEmpty {
-                    ContentUnavailableView("No Hosts", systemImage: "server.rack", description: Text("Add your Hermes host, then add one or more profiles inside it."))
-                } else {
-                    ForEach(savedConnectionGroups) { group in
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Image(systemName: "server.rack")
-                                    .foregroundStyle(.secondary)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(group.title)
-                                        .font(.subheadline.weight(.semibold))
-                                    Text("\(group.connections.count) Hermes \(group.connections.count == 1 ? "profile" : "profiles")")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                if store.activeHostFingerprint == group.id {
-                                    Text("Active Host")
-                                        .font(.caption.weight(.semibold))
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(Color.green.opacity(0.15), in: Capsule())
-                                } else {
-                                    Button("Use Host") {
-                                        store.activateHost(group.id)
-                                    }
-                                    .buttonStyle(.bordered)
-                                }
-                                Button {
-                                    addProfile(to: group)
-                                } label: {
-                                    Label("Add Profile", systemImage: "plus")
-                                        .labelStyle(.iconOnly)
-                                }
-                                .buttonStyle(.borderless)
-                            }
-
-                            ForEach(group.connections) { connection in
-                                connectionRow(connection)
-                                    .swipeActions {
-                                        Button(role: .destructive) {
-                                            store.removeConnection(connection)
-                                        } label: {
-                                            Label("Delete", systemImage: "trash")
-                                        }
-                                    }
-                                if connection.id != group.connections.last?.id {
-                                    Divider()
-                                }
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                }
-            }
+            connectionGuideSection
         }
         .navigationTitle("Connections")
         .toolbar {
@@ -111,12 +54,12 @@ struct ConnectionsScreen: View {
 
     private var activeWorkspaceSummary: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Active Workspace")
+            Text("Active Host")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
             if let connection = store.activeConnection {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 12) {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(connection.label)
@@ -126,28 +69,25 @@ struct ConnectionsScreen: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        VStack(alignment: .trailing, spacing: 4) {
-                            Text(connection.resolvedHermesProfileName)
-                                .font(.caption.weight(.semibold))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(Color.green.opacity(0.16), in: Capsule())
-                            Text(connection.displayProfileScope)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
+                        Text(connection.resolvedHermesProfileName)
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.green.opacity(0.16), in: Capsule())
+                    }
+
+                    if !store.availableProfiles.isEmpty {
+                        profilePicker
                     }
 
                     if let overview = store.overview {
                         VStack(alignment: .leading, spacing: 8) {
-                            workspaceMetric(label: "Remote Home", value: overview.remoteHome)
                             workspaceMetric(label: "Hermes Home", value: overview.hermesHome)
-                            workspaceMetric(label: "Chat", value: "Native TUI Gateway over SSH")
+                            workspaceMetric(label: "Chat", value: "TUI Gateway over SSH")
                             workspaceMetric(label: "Session Store", value: overview.sessionStore?.path ?? "Not found")
-                            workspaceMetric(label: "Profiles", value: overview.availableProfiles.map(\.name).joined(separator: " · "))
                         }
                     } else {
-                        Text("Pull remote workspace details from here, then spend the rest of your time in Terminal, Sessions, and Files.")
+                        Text("Add one SSH host. Hermes profiles on that host are discovered automatically.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -155,40 +95,113 @@ struct ConnectionsScreen: View {
                 .padding(18)
                 .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             } else {
-                ContentUnavailableView("No Active Connection", systemImage: "server.rack", description: Text("Pick a saved connection to make Terminal, Sessions, and Files immediately usable."))
+                ContentUnavailableView(
+                    "No Active Host",
+                    systemImage: "server.rack",
+                    description: Text("Add one SSH host to use Chat, Terminal, Sessions, and Files. Profiles will appear automatically after discovery.")
+                )
             }
         }
     }
 
-    private func connectionRow(_ connection: ConnectionProfile) -> some View {
+    private var profilePicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Discovered Profiles")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(store.availableProfiles) { profile in
+                        Button {
+                            Task { await store.switchHermesProfile(to: profile.name) }
+                        } label: {
+                            HStack(spacing: 6) {
+                                if profile.name == store.activeConnection?.resolvedHermesProfileName {
+                                    Image(systemName: "checkmark.circle.fill")
+                                }
+                                Text(profile.name)
+                            }
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(profile.name == store.activeConnection?.resolvedHermesProfileName ? Color.green.opacity(0.16) : Color(.tertiarySystemBackground), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(store.isBusy || store.isLoadingOverview)
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+        }
+    }
+
+    private var savedHostsSection: some View {
+        Section("Saved Hosts") {
+            if store.connections.isEmpty {
+                ContentUnavailableView(
+                    "No Hosts",
+                    systemImage: "server.rack",
+                    description: Text("Add your Mac or server once. The app will discover default and named Hermes profiles over SSH.")
+                )
+            } else {
+                ForEach(savedConnectionGroups) { group in
+                    hostRow(group)
+                        .swipeActions {
+                            Button(role: .destructive) {
+                                removeHost(group)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
+                }
+            }
+        }
+    }
+
+    private func hostRow(_ group: ConnectionHostGroup) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "server.rack")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24)
+
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(connection.label)
+                    Text(group.primaryConnection.label)
                         .font(.headline)
-                    Text(connection.resolvedHermesProfileName)
+                    Text(group.title)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    Text(nativeChatSummary(for: connection))
+                    Text(group.isActive ? "Profiles are available above and in Chat." : "Use this host to discover its Hermes profiles.")
                         .font(.caption)
-                        .foregroundStyle(.tertiary)
-                    Text(".env: \(connection.remoteHermesHomePath)/.env")
-                        .font(.caption2.monospaced())
                         .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
                 }
+
                 Spacer()
+
+                if group.isActive {
+                    Text("Active")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.green.opacity(0.15), in: Capsule())
+                }
             }
 
             HStack(spacing: 10) {
-                Button("Select") {
-                    store.activateConnection(connection)
+                if !group.isActive {
+                    Button("Use Host") {
+                        store.activateHost(group.id)
+                    }
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.bordered)
 
                 Button("Edit") {
-                    editingConnectionID = connection.id
-                    draft = ConnectionDraft(connection: connection, credential: (try? store.credential(for: connection)) ?? SSHCredentialRecord())
+                    editingConnectionID = group.primaryConnection.id
+                    draft = ConnectionDraft(
+                        connection: group.primaryConnection,
+                        credential: (try? store.credential(for: group.primaryConnection)) ?? SSHCredentialRecord()
+                    )
                     isPresentingEditor = true
                 }
                 .buttonStyle(.bordered)
@@ -212,47 +225,39 @@ struct ConnectionsScreen: View {
         Section {
             DisclosureGroup(isExpanded: $showsConnectionGuide) {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("La chat nativa usa il runtime Hermes TUI Gateway via SSH. Non richiede API server o porte esposte.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    ConnectionsGuideStep(title: "1. Add the SSH host", detail: "Host, port, user, and credentials are the only setup the app needs.")
+                    ConnectionsGuideStep(title: "2. Let discovery run", detail: "Default and named Hermes profiles under ~/.hermes are found automatically.")
+                    ConnectionsGuideStep(title: "3. Pick a profile", detail: "Use the profile chips in Chat, Terminal, or this page. No per-profile connection setup is required.")
 
-                    if let connection = store.activeConnection {
-                        ConnectionsGuideStep(title: "1. SSH funziona", detail: "Host e credenziali permettono connessioni non interattive.")
-                        ConnectionsGuideStep(title: "2. Hermes CLI disponibile", detail: "Il comando hermes risponde a --version.")
-                        ConnectionsGuideStep(title: "3. TUI Gateway importabile", detail: "python3 può importare tui_gateway.entry.")
-                        ConnectionsGuideStep(title: "4. Usa Terminale come fallback", detail: "Se il gateway non è disponibile, Terminale conserva il runtime Hermes/TUI completo.")
-                    } else {
-                        ConnectionsGuideStep(title: "1. Aggiungi un host", detail: "Inserisci host, porta SSH e utente. È abbastanza per Terminale, Files e Chat.")
-                        ConnectionsGuideStep(title: "2. Profilo Hermes opzionale", detail: "Default usa ~/.hermes/.env. Profili alternativi usano ~/.hermes/profiles/<nome>/.env.")
-                    }
-
-                    Text("Sicuro: la chat passa tramite SSH e non richiede esporre porte.")
+                    Text("Chat uses the Hermes TUI Gateway over SSH. No API server or exposed port is required.")
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
                 .padding(.top, 8)
             } label: {
-                Label("Chat setup in 3 steps", systemImage: "questionmark.circle")
+                Label("How profile discovery works", systemImage: "questionmark.circle")
                     .font(.subheadline.weight(.semibold))
             }
         }
     }
 
     private var nativeChatSection: some View {
-        Section("Chat status") {
+        Section("Chat Readiness") {
             if let bootstrap = store.nativeChatStore.bootstrapStatus {
                 DetailRow(label: "SSH", value: bootstrap.sshConnected ? "Connected" : "Unavailable")
-                DetailRow(label: "Python", value: bootstrap.pythonAvailable ? "Available" : "Unavailable")
                 DetailRow(label: "Hermes CLI", value: bootstrap.hermesCLIAvailable ? "Available" : "Unavailable")
                 DetailRow(label: "TUI Gateway", value: bootstrap.tuiGatewayAvailable ? "Available" : "Unavailable")
                 if let fallbackReason = bootstrap.fallbackReason {
                     DetailRow(label: "What to check", value: fallbackReason)
                 }
+            } else if store.activeConnection == nil {
+                Text("Add a host to check chat readiness.")
+                    .foregroundStyle(.secondary)
             } else {
                 HStack {
                     ProgressView()
                         .controlSize(.small)
-                    Text("Checking native chat runtime...")
+                    Text("Checking chat runtime...")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -262,8 +267,9 @@ struct ConnectionsScreen: View {
                     await store.nativeChatStore.refreshBootstrapStatus(force: true)
                 }
             } label: {
-                Label("Refresh chat status", systemImage: "arrow.clockwise")
+                Label("Refresh", systemImage: "arrow.clockwise")
             }
+            .disabled(store.activeConnection == nil)
 
             Button {
                 Task {
@@ -309,35 +315,31 @@ struct ConnectionsScreen: View {
         }
     }
 
-    private func nativeChatSummary(for connection: ConnectionProfile) -> String {
-        "Native chat · \(connection.resolvedHermesProfileName) · SSH"
-    }
-
     private var savedConnectionGroups: [ConnectionHostGroup] {
         let grouped = Dictionary(grouping: store.connections, by: \.hostConnectionFingerprint)
-        return grouped.values.map { connections in
+        return grouped.values.compactMap { connections in
             let sortedConnections = connections.sorted {
-                if $0.resolvedHermesProfileName == $1.resolvedHermesProfileName {
-                    return $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending
+                if $0.usesDefaultHermesProfile != $1.usesDefaultHermesProfile {
+                    return $0.usesDefaultHermesProfile
                 }
                 return $0.resolvedHermesProfileName.localizedCaseInsensitiveCompare($1.resolvedHermesProfileName) == .orderedAscending
             }
-            let first = sortedConnections[0]
+            guard let first = sortedConnections.first else { return nil }
             return ConnectionHostGroup(
                 id: first.hostConnectionFingerprint,
                 title: first.displayDestination,
-                connections: sortedConnections
+                primaryConnection: first,
+                connections: sortedConnections,
+                isActive: store.activeHostFingerprint == first.hostConnectionFingerprint
             )
         }
         .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
     }
 
-    private func addProfile(to group: ConnectionHostGroup) {
-        guard let base = group.connections.first else { return }
-        let credential = (try? store.credential(for: base)) ?? SSHCredentialRecord()
-        editingConnectionID = nil
-        draft = ConnectionDraft(profileTemplateFrom: base, credential: credential)
-        isPresentingEditor = true
+    private func removeHost(_ group: ConnectionHostGroup) {
+        for connection in group.connections {
+            store.removeConnection(connection)
+        }
     }
 }
 
@@ -361,7 +363,9 @@ private struct ConnectionsGuideStep: View {
 private struct ConnectionHostGroup: Identifiable {
     let id: String
     let title: String
+    let primaryConnection: ConnectionProfile
     let connections: [ConnectionProfile]
+    let isActive: Bool
 }
 
 #endif
