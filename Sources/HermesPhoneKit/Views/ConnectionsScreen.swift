@@ -16,7 +16,7 @@ struct ConnectionsScreen: View {
     @State private var chatTestResult: String?
     @State private var isTestingChat = false
     @State private var showsConnectionGuide = true
-    @State private var showsAPIDiagnostics = false
+    @State private var showsGatewayDiagnostics = false
 
     var body: some View {
         List {
@@ -142,7 +142,7 @@ struct ConnectionsScreen: View {
                         VStack(alignment: .leading, spacing: 8) {
                             workspaceMetric(label: "Remote Home", value: overview.remoteHome)
                             workspaceMetric(label: "Hermes Home", value: overview.hermesHome)
-                            workspaceMetric(label: "Chat", value: connection.displayAPIServerEndpoint)
+                            workspaceMetric(label: "Chat", value: "Native TUI Gateway over SSH")
                             workspaceMetric(label: "Session Store", value: overview.sessionStore?.path ?? "Not found")
                             workspaceMetric(label: "Profiles", value: overview.availableProfiles.map(\.name).joined(separator: " · "))
                         }
@@ -169,7 +169,7 @@ struct ConnectionsScreen: View {
                     Text(connection.resolvedHermesProfileName)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    Text(chatAPIPortSummary(for: connection))
+                    Text(nativeChatSummary(for: connection))
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                     Text(".env: \(connection.remoteHermesHomePath)/.env")
@@ -212,28 +212,22 @@ struct ConnectionsScreen: View {
         Section {
             DisclosureGroup(isExpanded: $showsConnectionGuide) {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Prima ti colleghi via SSH. Terminale e Files funzionano già. Questi passi servono solo se vuoi usare la chat direttamente dall'app.")
+                    Text("La chat nativa usa il runtime Hermes TUI Gateway via SSH. Non richiede API server o porte esposte.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
 
                     if let connection = store.activeConnection {
-                        ConnectionsGuideStep(title: "1. Apri il .env del profilo", detail: "\(connection.remoteHermesHomePath)/.env. Puoi modificarlo da Files o dal Terminale dell'app.")
-                        connectionsCodeBlock(envSnippet(for: connection))
-                        ConnectionsGuideStep(title: "2. Usa gli stessi valori nell'app", detail: "Per \(connection.resolvedHermesProfileName), salva Chat Port \(connection.resolvedAPIServerPort). Se API_SERVER_KEY è vuota, lascia vuota anche la Chat Key.")
-                        ConnectionsGuideStep(title: "3. Riavvia Hermes per quel profilo", detail: restartGuidance(for: connection))
+                        ConnectionsGuideStep(title: "1. SSH funziona", detail: "Host e credenziali permettono connessioni non interattive.")
+                        ConnectionsGuideStep(title: "2. Hermes CLI disponibile", detail: "Il comando hermes risponde a --version.")
+                        ConnectionsGuideStep(title: "3. TUI Gateway importabile", detail: "python3 può importare tui_gateway.entry.")
+                        ConnectionsGuideStep(title: "4. Usa Terminale come fallback", detail: "Se il gateway non è disponibile, Terminale conserva il runtime Hermes/TUI completo.")
                     } else {
-                        ConnectionsGuideStep(title: "1. Aggiungi un host", detail: "Inserisci host, porta SSH e utente. È abbastanza per usare Terminale e Files.")
-                        ConnectionsGuideStep(title: "2. Aggiungi un profilo Hermes", detail: "Default usa ~/.hermes/.env. Un profilo chiamato work usa ~/.hermes/profiles/work/.env.")
-                        connectionsCodeBlock(genericEnvSnippet)
-                        ConnectionsGuideStep(title: "3. Usa gli stessi valori nell'app", detail: "Per ogni profilo con cui vuoi chattare, porta e key devono combaciare tra .env e app.")
+                        ConnectionsGuideStep(title: "1. Aggiungi un host", detail: "Inserisci host, porta SSH e utente. È abbastanza per Terminale, Files e Chat.")
+                        ConnectionsGuideStep(title: "2. Profilo Hermes opzionale", detail: "Default usa ~/.hermes/.env. Profili alternativi usano ~/.hermes/profiles/<nome>/.env.")
                     }
 
-                    Text("Sicuro: lascia API_SERVER_HOST su 127.0.0.1. La chat passa tramite SSH e non rende pubblico nulla.")
+                    Text("Sicuro: la chat passa tramite SSH e non richiede esporre porte.")
                         .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.secondary)
-
-                    Text("Più profili attivi insieme? Dai a ciascuno una porta diversa, ad esempio 8642, 8643, 8644.")
-                        .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
                 .padding(.top, 8)
@@ -248,9 +242,9 @@ struct ConnectionsScreen: View {
         Section("Chat status") {
             if let bootstrap = store.nativeChatStore.bootstrapStatus {
                 DetailRow(label: "SSH", value: bootstrap.sshConnected ? "Connected" : "Unavailable")
-                DetailRow(label: "Chat", value: bootstrap.apiServerAvailable ? "Ready" : "Needs setup")
-                DetailRow(label: "Chat Key", value: bootstrap.apiAuthenticated ? "OK" : "Check if you set one")
-                DetailRow(label: "Chat Port", value: String(bootstrap.apiServerPort))
+                DetailRow(label: "Python", value: bootstrap.pythonAvailable ? "Available" : "Unavailable")
+                DetailRow(label: "Hermes CLI", value: bootstrap.hermesCLIAvailable ? "Available" : "Unavailable")
+                DetailRow(label: "TUI Gateway", value: bootstrap.tuiGatewayAvailable ? "Available" : "Unavailable")
                 if let fallbackReason = bootstrap.fallbackReason {
                     DetailRow(label: "What to check", value: fallbackReason)
                 }
@@ -258,7 +252,7 @@ struct ConnectionsScreen: View {
                 HStack {
                     ProgressView()
                         .controlSize(.small)
-                    Text("Checking chat API...")
+                    Text("Checking native chat runtime...")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -294,9 +288,9 @@ struct ConnectionsScreen: View {
                     .foregroundStyle(.secondary)
             }
 
-            DisclosureGroup("Diagnostics", isExpanded: $showsAPIDiagnostics) {
+            DisclosureGroup("Diagnostics", isExpanded: $showsGatewayDiagnostics) {
                 if store.nativeChatStore.rawEvents.isEmpty {
-                    Text("No API events captured yet.")
+                    Text("No gateway events captured yet.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 } else {
@@ -315,48 +309,8 @@ struct ConnectionsScreen: View {
         }
     }
 
-    private func chatAPIPortSummary(for connection: ConnectionProfile) -> String {
-        if connection.hasExplicitAPIServerPort {
-            return "Chat Port \(connection.resolvedAPIServerPort)"
-        }
-        return "Chat Port \(connection.resolvedAPIServerPort) (default)"
-    }
-
-    private func envSnippet(for connection: ConnectionProfile) -> String {
-        """
-        API_SERVER_ENABLED=true
-        API_SERVER_PORT=\(connection.resolvedAPIServerPort)
-        API_SERVER_HOST=127.0.0.1
-        API_SERVER_KEY=
-        """
-    }
-
-    private var genericEnvSnippet: String {
-        """
-        API_SERVER_ENABLED=true
-        API_SERVER_PORT=8642
-        API_SERVER_HOST=127.0.0.1
-        API_SERVER_KEY=
-        """
-    }
-
-    private func restartGuidance(for connection: ConnectionProfile) -> String {
-        if let customHermesHomePath = connection.trimmedCustomHermesHomePath {
-            return "Dopo aver salvato .env, riavvia Hermes usando la home \(customHermesHomePath)."
-        }
-        if let profileName = connection.trimmedHermesProfile {
-            return "Dopo aver salvato .env, riavvia Hermes usando il profilo \(profileName)."
-        }
-        return "Dopo aver salvato .env, riavvia Hermes usando il profilo default."
-    }
-
-    private func connectionsCodeBlock(_ value: String) -> some View {
-        Text(value)
-            .font(.caption.monospaced())
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .background(Color(.tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    private func nativeChatSummary(for connection: ConnectionProfile) -> String {
+        "Native chat · \(connection.resolvedHermesProfileName) · SSH"
     }
 
     private var savedConnectionGroups: [ConnectionHostGroup] {
@@ -382,17 +336,8 @@ struct ConnectionsScreen: View {
         guard let base = group.connections.first else { return }
         let credential = (try? store.credential(for: base)) ?? SSHCredentialRecord()
         editingConnectionID = nil
-        draft = ConnectionDraft(profileTemplateFrom: base, credential: credential, apiServerPort: nextAPIPort(in: group))
+        draft = ConnectionDraft(profileTemplateFrom: base, credential: credential)
         isPresentingEditor = true
-    }
-
-    private func nextAPIPort(in group: ConnectionHostGroup) -> Int {
-        let usedPorts = Set(group.connections.compactMap { $0.hasExplicitAPIServerPort ? $0.resolvedAPIServerPort : nil })
-        var candidate = 8642
-        while usedPorts.contains(candidate) {
-            candidate += 1
-        }
-        return candidate
     }
 }
 

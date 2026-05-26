@@ -15,8 +15,6 @@ struct ConnectionDraft {
     var user = ""
     var hermesProfile = ""
     var customHermesHomePath = ""
-    var apiServerPort = "8642"
-    var apiServerKey = ""
     var authKind: SSHCredentialKind = .password
     var password = ""
     var privateKey = ""
@@ -31,23 +29,19 @@ struct ConnectionDraft {
         user = connection.sshUser
         hermesProfile = connection.hermesProfile ?? ""
         customHermesHomePath = connection.customHermesHomePath ?? ""
-        apiServerPort = String(connection.resolvedAPIServerPort)
-        apiServerKey = credential.apiServerKey ?? ""
         authKind = connection.authKind
         password = credential.password ?? ""
         privateKey = credential.privateKey ?? ""
         passphrase = credential.passphrase ?? ""
     }
 
-    init(profileTemplateFrom connection: ConnectionProfile, credential: SSHCredentialRecord, apiServerPort suggestedAPIPort: Int) {
+    init(profileTemplateFrom connection: ConnectionProfile, credential: SSHCredentialRecord) {
         label = ""
         host = connection.sshHost
         port = connection.sshPort.map(String.init) ?? "22"
         user = connection.sshUser
         hermesProfile = ""
         customHermesHomePath = ""
-        apiServerPort = String(suggestedAPIPort)
-        apiServerKey = credential.apiServerKey ?? ""
         authKind = connection.authKind
         password = credential.password ?? ""
         privateKey = credential.privateKey ?? ""
@@ -64,7 +58,6 @@ struct ConnectionDraft {
             sshUser: user,
             hermesProfile: hermesProfile.nilIfBlank,
             customHermesHomePath: customHermesHomePath.nilIfBlank,
-            apiServerPort: Int(apiServerPort),
             authKind: authKind
         )
     }
@@ -73,8 +66,7 @@ struct ConnectionDraft {
         SSHCredentialRecord(
             password: password.nilIfBlank,
             privateKey: privateKey.nilIfBlank,
-            passphrase: passphrase.nilIfBlank,
-            apiServerKey: apiServerKey.nilIfBlank
+            passphrase: passphrase.nilIfBlank
         )
     }
 
@@ -100,41 +92,6 @@ struct ConnectionDraft {
             return customHermesHomeDisplayName(trimmedCustomHermesHomePath)
         }
         return trimmedHermesProfile ?? "default"
-    }
-
-    var resolvedAPIServerPort: String {
-        guard let port = Int(apiServerPort), port > 0 else { return "8642" }
-        return String(port)
-    }
-
-    var chatAPIEnvFilePath: String {
-        if let trimmedCustomHermesHomePath {
-            return "\(trimmedCustomHermesHomePath)/.env"
-        }
-        if let trimmedHermesProfile {
-            return "~/.hermes/profiles/\(trimmedHermesProfile)/.env"
-        }
-        return "~/.hermes/.env"
-    }
-
-    var chatAPIRestartGuidance: String {
-        if let trimmedCustomHermesHomePath {
-            return "Riavvia Hermes usando la home \(trimmedCustomHermesHomePath)."
-        }
-        if let trimmedHermesProfile {
-            return "Riavvia Hermes usando il profilo \(trimmedHermesProfile)."
-        }
-        return "Riavvia Hermes usando il profilo default."
-    }
-
-    var chatAPIEnvSnippet: String {
-        let keyValue = apiServerKey.nilIfBlank == nil ? "" : "<same value as Chat Key>"
-        return """
-        API_SERVER_ENABLED=true
-        API_SERVER_PORT=\(resolvedAPIServerPort)
-        API_SERVER_HOST=127.0.0.1
-        API_SERVER_KEY=\(keyValue)
-        """
     }
 
     private func customHermesHomeDisplayName(_ path: String) -> String {
@@ -179,20 +136,6 @@ struct ConnectionEditorView: View {
                     .autocorrectionDisabled()
 
                 profileScopeHelp
-            }
-
-            Section("Chat nell'app") {
-                TextField("Chat Port", text: $draft.apiServerPort)
-                    .keyboardType(.numberPad)
-                SecureField("Chat Key (optional)", text: $draft.apiServerKey)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-
-                Text("Serve solo se vuoi chattare direttamente dall'app. Usa qui gli stessi valori che metti nel file .env di questo profilo.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-
-                chatSetupGuide
             }
 
             Section("Authentication") {
@@ -281,62 +224,6 @@ struct ConnectionEditorView: View {
         }
     }
 
-    private var chatSetupGuide: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Passi per attivare la chat")
-                .font(.footnote.weight(.semibold))
-
-            ConnectionSetupStep(number: "1", title: "Apri il file .env del profilo", detail: "\(draft.chatAPIEnvFilePath). Puoi farlo da Files o dal Terminale dell'app.")
-            codeBlock(draft.chatAPIEnvSnippet)
-
-            ConnectionSetupStep(
-                number: "2",
-                title: "Copia gli stessi valori qui",
-                detail: "La porta salvata nell'app deve essere \(draft.resolvedAPIServerPort). La Chat Key è opzionale: se la lasci vuota in .env, lasciala vuota anche qui."
-            )
-
-            ConnectionSetupStep(number: "3", title: "Riavvia Hermes per questo profilo", detail: draft.chatAPIRestartGuidance)
-
-            Text("Solo se tieni più profili attivi insieme: usa una porta diversa per ognuno, per esempio 8642, 8643, 8644.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 6)
-    }
-
-    private func codeBlock(_ value: String) -> some View {
-        Text(value)
-            .font(.caption.monospaced())
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .background(Color(.tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-}
-
-private struct ConnectionSetupStep: View {
-    let number: String
-    let title: String
-    let detail: String
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Text(number)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(.white)
-                .frame(width: 22, height: 22)
-                .background(Color.accentColor, in: Circle())
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.footnote.weight(.semibold))
-                Text(detail)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-        }
-    }
 }
 
 extension String {

@@ -272,7 +272,7 @@ final class HermesPhoneStore: ObservableObject {
                 !$0.usesCustomHermesHome &&
                 $0.resolvedHermesProfileName == profileName
         }) else {
-            present(SSHTransportError.invalidConnection("Add \(profileName) under this host in Connections and set its Chat Port before switching to it."))
+            present(SSHTransportError.invalidConnection("Add \(profileName) under this host in Connections before switching to it."))
             return
         }
 
