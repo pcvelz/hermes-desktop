@@ -8,8 +8,16 @@ if ! command -v apt-get >/dev/null 2>&1; then
 fi
 
 sudo apt-get update
+
+# Detect which WebKit2GTK dev package is available (4.1 on Ubuntu 22.04+, 4.0 on Ubuntu 20.04)
+if apt-cache show libwebkit2gtk-4.1-dev >/dev/null 2>&1; then
+    WEBKIT_PKG="libwebkit2gtk-4.1-dev"
+else
+    WEBKIT_PKG="libwebkit2gtk-4.0-dev"
+fi
+
 sudo apt-get install -y \
-    libwebkit2gtk-4.1-dev \
+    "$WEBKIT_PKG" \
     libgtk-3-dev \
     libayatana-appindicator3-dev \
     librsvg2-dev \
