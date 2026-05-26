@@ -53,6 +53,10 @@ jobs:
       - name: Use Rust stable
         run: rustup default stable
 
+      - name: Install macOS Rust targets
+        if: runner.os == 'macOS'
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
@@ -117,7 +121,7 @@ jobs:
         with:
           name: hermes-desktop-tauri-${{ matrix.artifact-suffix }}-${{ github.sha }}
           path: |
-            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
       - name: Upload bundle artifacts (Windows)
