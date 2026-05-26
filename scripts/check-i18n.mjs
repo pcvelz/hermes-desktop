@@ -22,7 +22,7 @@ const dictionaries = Object.fromEntries(
   ),
 );
 
-const i18nSource = await readFile(path.join(root, "src/i18n.ts"), "utf8");
+const i18nSource = (await readFile(path.join(root, "src/i18n.ts"), "utf8")).replaceAll("\r\n", "\n");
 const overlayKeys = parseOverlayTranslationKeys(i18nSource);
 const frontendFiles = await listTypeScriptFiles(path.join(root, "src"));
 const localizedCallKeys = new Set();

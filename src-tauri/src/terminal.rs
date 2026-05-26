@@ -119,7 +119,8 @@ pub fn start_terminal_session_inner(
     let normalized_initial_input = initial_input
         .map(|value| value.trim_end_matches(['\r', '\n']).to_string())
         .filter(|value| !value.is_empty());
-    let mut remote_command = remote_shell_bootstrap_command(&profile, normalized_startup.as_deref());
+    let mut remote_command =
+        remote_shell_bootstrap_command(&profile, normalized_startup.as_deref());
     if let (Some(c), Some(r)) = (cols, rows) {
         remote_command = format!("stty cols {} rows {} 2>/dev/null; {}", c, r, remote_command);
     }
