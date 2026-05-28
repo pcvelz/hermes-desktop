@@ -1,5 +1,5 @@
 export const hermesDesktopLatestReleaseUrl =
-  "https://api.github.com/repos/dodo-reach/hermes-desktop/releases/latest";
+  "https://api.github.com/repos/linuxlifepage/hermes-desktop-linux-win-mac/releases/latest";
 
 export interface AvailableUpdate {
   currentVersion: string;

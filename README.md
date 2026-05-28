@@ -171,6 +171,7 @@ hermes-desktop/
 | `npm run tauri:build:macos` | Build `.dmg` bundle |
 | `npm run tauri:build:windows` | Build `.msi` and `.nsis` installers |
 | `npm run test:i18n` | Verify localization key parity across all locales |
+| `npm run release -- 0.10.4 --push` | Bump all app versions, run release checks, commit, tag, and push the tag for CI release |
 | `npm run test:smoke:ssh` | Run read-only SSH smoke tests against a real Hermes host |
 | `npm run test:smoke:ssh:mutations` | Run disposable mutation smoke tests against a real host |
 
@@ -292,7 +293,7 @@ push, pull request, and manual dispatch.
 
 | Platform | Runner | Bundle output |
 | --- | --- | --- |
-| Linux | `ubuntu-latest` | `.deb`, `.rpm` |
+| Linux | `ubuntu-22.04` | `.deb`, `.rpm`, `.AppImage` |
 | macOS | `macos-latest` | `.dmg` |
 | Windows | `windows-latest` | `.msi`, `.nsis` |
 
@@ -313,6 +314,20 @@ push, pull request, and manual dispatch.
 
 Build artifacts are attached to each CI run and can be downloaded from the
 GitHub Actions summary page.
+
+### Release process
+
+Use the release script so app versions, commits, tags, and release notes stay in sync:
+
+```bash
+npm run release -- 0.10.4 --push
+```
+
+The script updates `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`,
+`src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json`, then runs localization,
+frontend, Rust formatting, Rust check, and Rust test gates before creating an
+annotated tag. Pushing the tag starts the existing GitHub Actions release job;
+do not create GitHub Releases manually before CI artifacts are ready.
 
 ## Configuration
 

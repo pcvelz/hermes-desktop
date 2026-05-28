@@ -162,6 +162,7 @@ interface AppState {
   isCheckingForUpdates: boolean;
   hasPerformedAutomaticUpdateCheck: boolean;
   appTheme: AppTheme;
+  isThemeMenuOpen: boolean;
   editor: ConnectionProfile | null;
   isEditingNewConnection: boolean;
   sessions: SessionSummary[];
@@ -280,6 +281,12 @@ const designAppThemeOptions = [
 type DesignAppTheme = (typeof designAppThemeOptions)[number]["id"];
 const designAppThemeIds = designAppThemeOptions.map((theme) => theme.id);
 type AppTheme = "dark" | "light" | DesignAppTheme;
+type AppThemeOption = {
+  id: AppTheme;
+  label: string;
+  title: string;
+  icon: string;
+};
 
 interface TerminalLiveTab extends TerminalSessionInfo {
   output: string;
@@ -405,6 +412,7 @@ let state: AppState = {
   isCheckingForUpdates: false,
   hasPerformedAutomaticUpdateCheck: false,
   appTheme: "dark",
+  isThemeMenuOpen: false,
   editor: null,
   isEditingNewConnection: false,
   sessions: [],
@@ -583,9 +591,7 @@ function render() {
   const visibleSections = active ? sections : sections.filter((section) => section.id === "connections");
   const nextTheme: AppTheme = state.appTheme === "light" ? "dark" : "light";
   const isDesignTheme = isDesignAppTheme(state.appTheme);
-  const nextDesignTheme = nextDesignAppTheme(state.appTheme);
-  const designThemeTitle = nextDesignTheme === "dark" ? "Switch to dark mode" : designAppThemeTitle(nextDesignTheme);
-  const designThemeLabel = isDesignTheme ? designAppThemeLabel(state.appTheme) : designAppThemeLabel(nextDesignTheme);
+  const themeMenuLabel = isDesignTheme ? designAppThemeLabel(state.appTheme) : "Theme";
 
   app.innerHTML = `
     <div class="app-shell">
@@ -627,9 +633,12 @@ function render() {
             <button class="secondary-button theme-toggle" data-action="toggle-theme" title="${state.appTheme === "light" ? "Switch to dark mode" : "Switch to light mode"}" aria-label="${state.appTheme === "light" ? "Switch to dark mode" : "Switch to light mode"}">
               ${icon(state.appTheme === "light" ? "moon" : "sun")}<span>${nextTheme === "light" ? "Light" : "Dark"}</span>
             </button>
-            <button class="secondary-button theme-toggle design-theme-toggle ${isDesignTheme ? "active" : ""}" data-action="cycle-design-theme" title="${escapeAttribute(designThemeTitle)}" aria-label="${escapeAttribute(designThemeTitle)}" aria-pressed="${isDesignTheme ? "true" : "false"}">
-              ${icon("brush")}<span>${escapeHtml(designThemeLabel)}</span>
-            </button>
+            <div class="theme-menu-shell">
+              <button class="secondary-button theme-toggle design-theme-toggle ${isDesignTheme ? "active" : ""}" data-action="toggle-theme-menu" title="Choose theme" aria-label="Choose theme" aria-expanded="${state.isThemeMenuOpen ? "true" : "false"}" aria-haspopup="menu">
+                ${icon("brush")}<span>${escapeHtml(themeMenuLabel)}</span>
+              </button>
+              ${state.isThemeMenuOpen ? appThemeMenu() : ""}
+            </div>
             <button class="secondary-button" data-action="check-updates" title="Check for updates" ${state.isCheckingForUpdates ? "disabled" : ""}>${icon("refresh")}<span>${state.isCheckingForUpdates ? "Checking" : "Updates"}</span></button>
             ${
               active
@@ -844,24 +853,42 @@ function applyAppTheme() {
   document.documentElement.dataset.theme = state.appTheme;
 }
 
+function appThemeOptions(): AppThemeOption[] {
+  return [
+    { id: "dark", label: "Dark", title: "Switch to dark mode", icon: "moon" },
+    { id: "light", label: "Light", title: "Switch to light mode", icon: "sun" },
+    ...designAppThemeOptions.map((theme) => ({
+      id: theme.id,
+      label: theme.label,
+      title: theme.title,
+      icon: "brush",
+    })),
+  ];
+}
+
+function appThemeMenu() {
+  return `
+    <div class="theme-menu" role="menu" aria-label="Theme">
+      ${appThemeOptions()
+        .map(
+          (option) => `
+            <button class="theme-menu-item ${state.appTheme === option.id ? "active" : ""}" data-theme-option="${option.id}" role="menuitemradio" aria-checked="${state.appTheme === option.id ? "true" : "false"}" title="${escapeAttribute(option.title)}">
+              ${icon(option.icon)}
+              <span>${escapeHtml(option.label)}</span>
+            </button>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 function isDesignAppTheme(value: unknown): value is DesignAppTheme {
   return typeof value === "string" && designAppThemeIds.includes(value as DesignAppTheme);
 }
 
-function nextDesignAppTheme(currentTheme: AppTheme): AppTheme {
-  if (!isDesignAppTheme(currentTheme)) {
-    return designAppThemeIds[0];
-  }
-  const currentIndex = designAppThemeIds.indexOf(currentTheme);
-  return designAppThemeIds[currentIndex + 1] ?? "dark";
-}
-
 function designAppThemeLabel(theme: AppTheme) {
   return designAppThemeOption(theme)?.label ?? designAppThemeOptions[0].label;
-}
-
-function designAppThemeTitle(theme: AppTheme) {
-  return designAppThemeOption(theme)?.title ?? designAppThemeOptions[0].title;
 }
 
 function designAppThemeOption(theme: AppTheme) {
@@ -3825,6 +3852,23 @@ function bindEvents() {
     void updateAppLocale(select.value as AppLocale);
   });
 
+  app.querySelectorAll<HTMLButtonElement>("[data-theme-option]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const appTheme = appThemeValue(button.dataset.themeOption);
+      if (appTheme) {
+        updateAppTheme(appTheme);
+      }
+    });
+  });
+
+  app.querySelector<HTMLElement>(".app-shell")?.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (state.isThemeMenuOpen && !target?.closest(".theme-menu-shell")) {
+      state = { ...state, isThemeMenuOpen: false };
+      render();
+    }
+  });
+
   app.querySelectorAll<HTMLButtonElement>("[data-browse-path]").forEach((button) => {
     button.addEventListener("click", () => {
       const path = button.dataset.browsePath;
@@ -3872,8 +3916,9 @@ function bindEvents() {
       if (action === "toggle-theme") {
         toggleAppTheme();
       }
-      if (action === "cycle-design-theme") {
-        cycleDesignAppTheme();
+      if (action === "toggle-theme-menu") {
+        state = { ...state, isThemeMenuOpen: !state.isThemeMenuOpen };
+        render();
       }
       if (action === "clear-error") {
         state = { ...state, error: null };
@@ -4580,21 +4625,14 @@ async function updateAppLocale(locale: AppLocale) {
 
 function toggleAppTheme() {
   const appTheme: AppTheme = state.appTheme === "light" ? "dark" : "light";
-  state = {
-    ...state,
-    appTheme,
-    status: t("Theme updated."),
-    error: null,
-  };
-  render();
-  scrollTerminalToBottom();
+  updateAppTheme(appTheme);
 }
 
-function cycleDesignAppTheme() {
-  const appTheme = nextDesignAppTheme(state.appTheme);
+function updateAppTheme(appTheme: AppTheme) {
   state = {
     ...state,
     appTheme,
+    isThemeMenuOpen: false,
     status: t("Theme updated."),
     error: null,
   };
