@@ -315,6 +315,10 @@ export function writeTerminalSession(sessionId: string, input: string): Promise<
   return invoke("write_terminal_session", { sessionId, input });
 }
 
+export function resizeTerminalSession(sessionId: string, cols: number, rows: number): Promise<void> {
+  return invoke("resize_terminal_session", { sessionId, cols, rows });
+}
+
 export function stopTerminalSession(sessionId: string): Promise<void> {
   return invoke("stop_terminal_session", { sessionId });
 }

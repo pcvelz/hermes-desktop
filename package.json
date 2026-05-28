@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test:i18n": "node scripts/check-i18n.mjs",
+    "test:smoke:terminal-layout": "node scripts/smoke-terminal-layout.mjs",
     "test:smoke:ssh": "cargo test --manifest-path src-tauri/Cargo.toml real_host_read_only_smoke -- --ignored --nocapture",
     "test:smoke:ssh:mutations": "cargo test --manifest-path src-tauri/Cargo.toml real_host_mutation_smoke -- --ignored --nocapture",
     "preview": "vite preview",

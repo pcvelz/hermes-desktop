@@ -514,8 +514,8 @@ input[type="checkbox"] {
 }
 
 .terminal-workspace {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   min-height: min(760px, calc(100vh - 150px));
   min-width: 0;
@@ -620,8 +620,9 @@ input[type="checkbox"] {
 }
 
 .terminal-live-panel {
-  display: grid;
-  grid-template-rows: auto auto minmax(260px, 1fr) auto;
+  display: flex;
+  flex: 1 1 560px;
+  flex-direction: column;
   min-height: 0;
   max-height: calc(100vh - 210px);
   border: 1px solid var(--terminal-border);
@@ -709,8 +710,9 @@ input[type="checkbox"] {
 }
 
 .terminal-screen {
+  flex: 1 1 320px;
   min-height: 260px;
-  height: 100%;
+  height: auto;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
@@ -2653,7 +2655,6 @@ dd {
 
   .terminal-workspace {
     min-height: 620px;
-    grid-template-rows: auto minmax(360px, 1fr) auto;
   }
 }
 
@@ -2775,11 +2776,10 @@ dd {
 
   .terminal-workspace {
     min-height: 560px;
-    grid-template-rows: auto minmax(320px, 1fr) auto;
   }
 
   .terminal-live-panel {
-    grid-template-rows: auto auto minmax(260px, 1fr) auto;
+    flex-basis: 420px;
   }
 
   .terminal-toolbar-actions,

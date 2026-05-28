@@ -8,8 +8,14 @@ use crate::ssh;
 use chrono::Utc;
 use serde::Serialize;
 use std::collections::HashMap;
+#[cfg(unix)]
+use std::fs::File;
 use std::io::{Read, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, FromRawFd};
+#[cfg(not(unix))]
+use std::process::ChildStdin;
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -28,7 +34,49 @@ pub struct TerminalState {
 #[derive(Clone)]
 struct TerminalProcess {
     child: Arc<Mutex<Child>>,
-    stdin: Arc<Mutex<ChildStdin>>,
+    stdin: Arc<Mutex<TerminalInput>>,
+    resize: TerminalResizeHandle,
+}
+
+struct TerminalSpawn {
+    process: TerminalProcess,
+    stdout: Box<dyn Read + Send>,
+    stderr: Option<Box<dyn Read + Send>>,
+}
+
+enum TerminalInput {
+    #[cfg(not(unix))]
+    Pipe(ChildStdin),
+    #[cfg(unix)]
+    Pty(File),
+}
+
+impl Write for TerminalInput {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        match self {
+            #[cfg(not(unix))]
+            TerminalInput::Pipe(stdin) => stdin.write(buffer),
+            #[cfg(unix)]
+            TerminalInput::Pty(master) => master.write(buffer),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            #[cfg(not(unix))]
+            TerminalInput::Pipe(stdin) => stdin.flush(),
+            #[cfg(unix)]
+            TerminalInput::Pty(master) => master.flush(),
+        }
+    }
+}
+
+#[derive(Clone)]
+enum TerminalResizeHandle {
+    #[cfg(unix)]
+    Pty(Arc<Mutex<File>>),
+    #[cfg(not(unix))]
+    Unsupported,
 }
 
 #[derive(Clone, Default)]
@@ -125,34 +173,8 @@ pub fn start_terminal_session_inner(
         remote_command = format!("stty cols {} rows {} 2>/dev/null; {}", c, r, remote_command);
     }
     let arguments = ssh::shell_arguments(&profile, Some(remote_command), true);
-
-    let mut child = Command::new("ssh")
-        .args(arguments)
-        .env("TERM", "xterm-256color")
-        .env("COLORTERM", "truecolor")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| HermesError::Launch(error.to_string()))?;
-
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| HermesError::Launch("Failed to open terminal stdout.".to_string()))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| HermesError::Launch("Failed to open terminal stderr.".to_string()))?;
-    let stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| HermesError::Launch("Failed to open terminal stdin.".to_string()))?;
-
-    let process = TerminalProcess {
-        child: Arc::new(Mutex::new(child)),
-        stdin: Arc::new(Mutex::new(stdin)),
-    };
+    let spawn = spawn_interactive_ssh(arguments, cols, rows)?;
+    let process = spawn.process.clone();
 
     state
         .sessions
@@ -168,16 +190,18 @@ pub fn start_terminal_session_inner(
         app.clone(),
         session_id.clone(),
         TerminalSessionEventKind::Stdout,
-        stdout,
+        spawn.stdout,
         initial_input_gate.clone(),
     );
-    spawn_terminal_reader(
-        app.clone(),
-        session_id.clone(),
-        TerminalSessionEventKind::Stderr,
-        stderr,
-        initial_input_gate.clone(),
-    );
+    if let Some(stderr) = spawn.stderr {
+        spawn_terminal_reader(
+            app.clone(),
+            session_id.clone(),
+            TerminalSessionEventKind::Stderr,
+            stderr,
+            initial_input_gate.clone(),
+        );
+    }
     spawn_terminal_waiter(
         app.clone(),
         state.sessions.clone(),
@@ -259,6 +283,189 @@ pub fn stop_terminal_session_inner(state: &TerminalState, session_id: String) ->
     Ok(())
 }
 
+pub fn resize_terminal_session_inner(
+    state: &TerminalState,
+    session_id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<()> {
+    let cols = terminal_size_value(cols, 2);
+    let rows = terminal_size_value(rows, 1);
+    let process = state
+        .sessions
+        .lock()
+        .map_err(|_| HermesError::Launch("Terminal session state is poisoned.".to_string()))?
+        .get(&session_id)
+        .cloned()
+        .ok_or_else(|| HermesError::Validation("Terminal session is not running.".to_string()))?;
+
+    resize_terminal_process(&process, cols, rows)
+}
+
+fn spawn_interactive_ssh(
+    arguments: Vec<String>,
+    cols: Option<u16>,
+    rows: Option<u16>,
+) -> Result<TerminalSpawn> {
+    #[cfg(unix)]
+    {
+        spawn_interactive_ssh_with_pty(arguments, cols, rows)
+    }
+    #[cfg(not(unix))]
+    {
+        spawn_interactive_ssh_with_pipes(arguments)
+    }
+}
+
+#[cfg(unix)]
+fn spawn_interactive_ssh_with_pty(
+    arguments: Vec<String>,
+    cols: Option<u16>,
+    rows: Option<u16>,
+) -> Result<TerminalSpawn> {
+    let (master, slave) = open_pty(cols, rows)?;
+    let stdin = slave
+        .try_clone()
+        .map_err(|error| HermesError::Launch(error.to_string()))?;
+    let stdout = slave
+        .try_clone()
+        .map_err(|error| HermesError::Launch(error.to_string()))?;
+    let stderr = slave;
+    let child = Command::new("ssh")
+        .args(arguments)
+        .env("TERM", "xterm-256color")
+        .env("COLORTERM", "truecolor")
+        .stdin(Stdio::from(stdin))
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr))
+        .spawn()
+        .map_err(|error| HermesError::Launch(error.to_string()))?;
+
+    let master_writer = master
+        .try_clone()
+        .map_err(|error| HermesError::Launch(error.to_string()))?;
+    let master_resizer = master
+        .try_clone()
+        .map_err(|error| HermesError::Launch(error.to_string()))?;
+    let child = Arc::new(Mutex::new(child));
+    Ok(TerminalSpawn {
+        process: TerminalProcess {
+            child,
+            stdin: Arc::new(Mutex::new(TerminalInput::Pty(master_writer))),
+            resize: TerminalResizeHandle::Pty(Arc::new(Mutex::new(master_resizer))),
+        },
+        stdout: Box::new(master),
+        stderr: None,
+    })
+}
+
+#[cfg(not(unix))]
+fn spawn_interactive_ssh_with_pipes(arguments: Vec<String>) -> Result<TerminalSpawn> {
+    let mut child = Command::new("ssh")
+        .args(arguments)
+        .env("TERM", "xterm-256color")
+        .env("COLORTERM", "truecolor")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| HermesError::Launch(error.to_string()))?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| HermesError::Launch("Failed to open terminal stdout.".to_string()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| HermesError::Launch("Failed to open terminal stderr.".to_string()))?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| HermesError::Launch("Failed to open terminal stdin.".to_string()))?;
+
+    Ok(TerminalSpawn {
+        process: TerminalProcess {
+            child: Arc::new(Mutex::new(child)),
+            stdin: Arc::new(Mutex::new(TerminalInput::Pipe(stdin))),
+            resize: TerminalResizeHandle::Unsupported,
+        },
+        stdout: Box::new(stdout),
+        stderr: Some(Box::new(stderr)),
+    })
+}
+
+#[cfg(unix)]
+fn open_pty(cols: Option<u16>, rows: Option<u16>) -> Result<(File, File)> {
+    let mut master_fd = -1;
+    let mut slave_fd = -1;
+    let mut winsize = libc::winsize {
+        ws_row: rows.unwrap_or(24),
+        ws_col: cols.unwrap_or(80),
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    let result = unsafe {
+        libc::openpty(
+            &mut master_fd,
+            &mut slave_fd,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            &mut winsize,
+        )
+    };
+    if result == -1 {
+        return Err(HermesError::Launch(
+            std::io::Error::last_os_error().to_string(),
+        ));
+    }
+    let master = unsafe { File::from_raw_fd(master_fd) };
+    let slave = unsafe { File::from_raw_fd(slave_fd) };
+    Ok((master, slave))
+}
+
+fn resize_terminal_process(process: &TerminalProcess, cols: u16, rows: u16) -> Result<()> {
+    match &process.resize {
+        #[cfg(unix)]
+        TerminalResizeHandle::Pty(master) => {
+            let master = master
+                .lock()
+                .map_err(|_| HermesError::Launch("Terminal PTY state is poisoned.".to_string()))?;
+            set_pty_size(&master, cols, rows)?;
+            if let Ok(child) = process.child.lock() {
+                let pid = child.id() as libc::pid_t;
+                unsafe {
+                    libc::kill(pid, libc::SIGWINCH);
+                }
+            }
+            Ok(())
+        }
+        #[cfg(not(unix))]
+        TerminalResizeHandle::Unsupported => Ok(()),
+    }
+}
+
+#[cfg(unix)]
+fn set_pty_size(master: &File, cols: u16, rows: u16) -> Result<()> {
+    let winsize = libc::winsize {
+        ws_row: rows,
+        ws_col: cols,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    let result = unsafe { libc::ioctl(master.as_raw_fd(), libc::TIOCSWINSZ, &winsize) };
+    if result == -1 {
+        return Err(HermesError::Launch(
+            std::io::Error::last_os_error().to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn terminal_size_value(value: u16, minimum: u16) -> u16 {
+    value.max(minimum)
+}
+
 fn spawn_terminal_reader<R>(
     app: AppHandle,
     session_id: String,
@@ -290,6 +497,9 @@ fn spawn_terminal_reader<R>(
                     );
                 }
                 Err(error) => {
+                    if is_terminal_reader_eof(&error) {
+                        break;
+                    }
                     emit_terminal_event(
                         &app,
                         TerminalSessionEvent {
@@ -305,6 +515,18 @@ fn spawn_terminal_reader<R>(
             }
         }
     });
+}
+
+fn is_terminal_reader_eof(error: &std::io::Error) -> bool {
+    #[cfg(unix)]
+    {
+        error.raw_os_error() == Some(libc::EIO)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = error;
+        false
+    }
 }
 
 fn spawn_terminal_waiter(
@@ -374,7 +596,7 @@ fn spawn_terminal_waiter(
 fn spawn_initial_input_sender(
     app: AppHandle,
     session_id: String,
-    stdin: Arc<Mutex<ChildStdin>>,
+    stdin: Arc<Mutex<TerminalInput>>,
     input: String,
     initial_input_gate: Option<InitialInputGate>,
 ) {
@@ -561,6 +783,13 @@ mod tests {
     fn trailing_chars_handles_short_and_long_values() {
         assert_eq!(trailing_chars("abc", 8), "abc");
         assert_eq!(trailing_chars("abcdef", 3), "def");
+    }
+
+    #[test]
+    fn terminal_size_value_clamps_to_minimum() {
+        assert_eq!(terminal_size_value(0, 2), 2);
+        assert_eq!(terminal_size_value(1, 2), 2);
+        assert_eq!(terminal_size_value(120, 2), 120);
     }
 
     #[test]

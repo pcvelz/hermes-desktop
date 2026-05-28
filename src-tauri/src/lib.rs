@@ -58,8 +58,8 @@ use skill::{create_skill_inner, list_skills_inner, load_skill_detail_inner, upda
 use storage::{load_preferences, load_snapshot, save_preferences, AppStorage};
 use tauri::{AppHandle, Manager, State};
 use terminal::{
-    run_terminal_command_inner, start_terminal_session_inner, stop_terminal_session_inner,
-    write_terminal_session_inner, TerminalSessionInfo, TerminalState,
+    resize_terminal_session_inner, run_terminal_command_inner, start_terminal_session_inner,
+    stop_terminal_session_inner, write_terminal_session_inner, TerminalSessionInfo, TerminalState,
 };
 use usage::load_usage_inner;
 use workflow::{
@@ -504,6 +504,17 @@ fn write_terminal_session(
     input: String,
 ) -> Result<(), String> {
     write_terminal_session_inner(&terminal_state, session_id, input)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn resize_terminal_session(
+    terminal_state: State<'_, TerminalState>,
+    session_id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    resize_terminal_session_inner(&terminal_state, session_id, cols, rows)
         .map_err(|error| error.to_string())
 }
 
@@ -1232,6 +1243,7 @@ pub fn run() {
             run_terminal_command,
             start_terminal_session,
             write_terminal_session,
+            resize_terminal_session,
             stop_terminal_session,
             list_kanban_boards,
             load_kanban_board,

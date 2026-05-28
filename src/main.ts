@@ -46,6 +46,7 @@ import {
   removeWorkspaceFileBookmark,
   reassignKanbanTask,
   resumeCronJob,
+  resizeTerminalSession,
   runCronJobNow,
   runTerminalCommand,
   saveConnection,
@@ -291,6 +292,8 @@ interface TerminalRenderer {
   container: HTMLElement | null;
   disposeDataHandler: { dispose: () => void };
   writtenLength: number;
+  syncedCols: number;
+  syncedRows: number;
   resizeObserver?: ResizeObserver;
 }
 
@@ -520,11 +523,7 @@ window.addEventListener("resize", () => {
   if (!renderer) {
     return;
   }
-  try {
-    renderer.fitAddon.fit();
-  } catch {
-    // Fitting is best-effort while the terminal panel is resizing.
-  }
+  fitAndSyncTerminalSize(renderer);
 });
 
 window.addEventListener("keydown", (event) => {
@@ -1243,19 +1242,22 @@ function messageView(message: SessionMessage) {
 function workflowsView() {
   const filtered = filteredWorkflows();
   const selected = selectedWorkflow();
+  const workflowListTitle = state.workflows.length
+    ? tf("Saved Workflows (%@ of %@)", filtered.length, state.workflows.length)
+    : t("Saved Workflows");
   return `
     <div class="workflows-layout">
       <section class="list-panel workflows-list-panel">
         <form class="workflow-search" data-workflow-search>
-          <input name="workflowQuery" value="${escapeAttribute(state.workflowQuery)}" placeholder="Search workflows" autocomplete="off" />
-          <button class="secondary-button" type="submit" ${state.isLoadingWorkflows ? "disabled" : ""}>${icon("search")}<span>Search</span></button>
+          <input name="workflowQuery" value="${escapeAttribute(state.workflowQuery)}" placeholder="${escapeAttribute(t("Search workflows"))}" autocomplete="off" />
+          <button class="secondary-button" type="submit" ${state.isLoadingWorkflows ? "disabled" : ""}>${icon("search")}<span>${t("Search")}</span></button>
         </form>
 
         <div class="panel-heading">
-          <h2>${state.workflows.length ? `Saved Workflows (${filtered.length} of ${state.workflows.length})` : "Saved Workflows"}</h2>
+          <h2>${escapeHtml(workflowListTitle)}</h2>
           <div class="form-actions">
-            <button class="icon-button small" data-action="reload-workflows" title="Refresh Workflows" ${state.isLoadingWorkflows ? "disabled" : ""}>${icon("refresh")}</button>
-            <button class="icon-button small" data-action="new-workflow" title="New Workflow">${icon("plus")}</button>
+            <button class="icon-button small" data-action="reload-workflows" title="${escapeAttribute(t("Refresh Workflows"))}" ${state.isLoadingWorkflows ? "disabled" : ""}>${icon("refresh")}</button>
+            <button class="icon-button small" data-action="new-workflow" title="${escapeAttribute(t("New Workflow"))}">${icon("plus")}</button>
           </div>
         </div>
 
@@ -1264,9 +1266,9 @@ function workflowsView() {
         <div class="workflow-list">
           ${
             state.isLoadingWorkflows && state.workflows.length === 0
-              ? `<div class="empty-state">Loading workflows...</div>`
+              ? `<div class="empty-state">${t("Loading workflows...")}</div>`
               : filtered.length === 0
-                ? `<div class="empty-state">${state.workflowQuery ? "No matching workflows." : "No workflows saved."}</div>`
+                ? `<div class="empty-state">${state.workflowQuery ? t("No matching workflows.") : t("No workflows saved.")}</div>`
                 : filtered.map(workflowRow).join("")
           }
         </div>
@@ -1278,7 +1280,7 @@ function workflowsView() {
             ? workflowEditorView()
             : selected
               ? workflowDetailView(selected)
-              : `<div class="empty-state large"><strong>Select a workflow</strong><span>Choose a preset or create a new one for this host/profile.</span></div>`
+              : `<div class="empty-state large"><strong>${t("Select a workflow")}</strong><span>${t("Choose a preset or create a new one for this host/profile.")}</span></div>`
         }
       </section>
     </div>
@@ -1292,11 +1294,11 @@ function workflowRow(workflow: WorkflowPreset) {
     <button class="workflow-row ${active ? "active" : ""}" data-workflow="${escapeAttribute(workflow.id)}">
       <span class="workflow-row-main">
         <strong>${escapeHtml(workflow.name)}</strong>
-        <em class="${missing.length ? "warning" : "active"}">${missing.length ? "Missing skills" : "Runnable"}</em>
+        <em class="${missing.length ? "warning" : "active"}">${missing.length ? t("Missing skills") : t("Runnable")}</em>
       </span>
       <small>${escapeHtml(workflowPromptPreview(workflow.prompt))}</small>
       <span class="workflow-row-meta">
-        <em>${workflow.assignedSkills.length} skills</em>
+        <em>${escapeHtml(tf("%@ skills", workflow.assignedSkills.length))}</em>
         ${workflow.assignedSkills.slice(0, 2).map((skill) => `<em>${escapeHtml(workflowSkillName(skill))}</em>`).join("")}
         ${workflow.assignedSkills.length > 2 ? `<em>+${workflow.assignedSkills.length - 2}</em>` : ""}
       </span>
@@ -1314,31 +1316,31 @@ function workflowDetailView(workflow: WorkflowPreset) {
         <p>${escapeHtml(workflow.id)}</p>
       </div>
       <div class="form-actions">
-        <button class="primary-button" data-action="preview-workflow-launch" ${missing.length || state.isOperatingOnWorkflow ? "disabled" : ""}>${icon("terminal")}<span>Launch Command</span></button>
-        <button class="primary-button" data-action="launch-workflow-terminal" ${missing.length || state.isOperatingOnWorkflow ? "disabled" : ""}>${icon("terminal")}<span>Run Terminal</span></button>
-        <button class="primary-button" data-action="launch-workflow-chat" ${missing.length || state.isOperatingOnWorkflow ? "disabled" : ""}>${icon("chat")}<span>Run Chat</span></button>
-        <button class="secondary-button" data-action="edit-workflow">${icon("save")}<span>Edit</span></button>
-        <button class="danger-button" data-action="delete-workflow">${icon("trash")}<span>Remove</span></button>
+        <button class="primary-button" data-action="preview-workflow-launch" ${missing.length || state.isOperatingOnWorkflow ? "disabled" : ""}>${icon("terminal")}<span>${t("Launch Command")}</span></button>
+        <button class="primary-button" data-action="launch-workflow-terminal" ${missing.length || state.isOperatingOnWorkflow ? "disabled" : ""}>${icon("terminal")}<span>${t("Run Terminal")}</span></button>
+        <button class="primary-button" data-action="launch-workflow-chat" ${missing.length || state.isOperatingOnWorkflow ? "disabled" : ""}>${icon("chat")}<span>${t("Run Chat")}</span></button>
+        <button class="secondary-button" data-action="edit-workflow">${icon("save")}<span>${t("Edit")}</span></button>
+        <button class="danger-button" data-action="delete-workflow">${icon("trash")}<span>${t("Remove")}</span></button>
       </div>
     </div>
 
-    ${missing.length ? `<div class="banner">This workflow references skills that are unavailable on the active host/profile: ${escapeHtml(missing.map((skill) => skill.relativePath).join(", "))}</div>` : ""}
+    ${missing.length ? `<div class="banner">${escapeHtml(tf("This workflow references skills that are unavailable on the active host/profile: %@", missing.map((skill) => skill.relativePath).join(", ")))}</div>` : ""}
     ${state.skillsError && state.skills.length === 0 ? `<div class="banner">${escapeHtml(state.skillsError)}</div>` : ""}
 
     <section class="summary-panel workflow-panel">
-      <h2>Prompt</h2>
+      <h2>${t("Prompt")}</h2>
       <pre class="cron-pre">${escapeHtml(workflow.prompt)}</pre>
     </section>
 
     <section class="summary-panel workflow-panel">
-      <h2>Assigned Skills</h2>
+      <h2>${t("Assigned Skills")}</h2>
       ${
         workflow.assignedSkills.length
           ? `<div class="workflow-skill-list">
               ${resolved.map((skill) => workflowSkillItem(skill, "Available")).join("")}
               ${missing.map((skill) => workflowSkillItem(skill, "Missing")).join("")}
             </div>`
-          : `<div class="empty-state">No skills assigned.</div>`
+          : `<div class="empty-state">${t("No skills assigned.")}</div>`
       }
     </section>
 
@@ -1353,20 +1355,20 @@ function workflowLaunchPreviewView() {
   }
   return `
     <section class="summary-panel workflow-panel">
-      <h2>Terminal Launch Command</h2>
+      <h2>${t("Terminal Launch Command")}</h2>
       <pre class="cron-pre">${escapeHtml(preview.commandLine)}</pre>
-      <h2>Terminal Initial Input</h2>
-      <pre class="cron-pre">${escapeHtml(preview.initialInput || "(empty)")}</pre>
+      <h2>${t("Terminal Initial Input")}</h2>
+      <pre class="cron-pre">${escapeHtml(preview.initialInput || t("(empty)"))}</pre>
       <details>
-        <summary>Terminal SSH startup command</summary>
+        <summary>${t("Terminal SSH startup command")}</summary>
         <pre class="cron-pre">${escapeHtml(preview.startupCommandLine)}</pre>
       </details>
-      <h2>Chat Launch Command</h2>
+      <h2>${t("Chat Launch Command")}</h2>
       <pre class="cron-pre">${escapeHtml(preview.chatCommandLine)}</pre>
-      <h2>Chat Initial Input</h2>
-      <pre class="cron-pre">${escapeHtml(preview.chatInitialInput || "(empty)")}</pre>
+      <h2>${t("Chat Initial Input")}</h2>
+      <pre class="cron-pre">${escapeHtml(preview.chatInitialInput || t("(empty)"))}</pre>
       <details>
-        <summary>Chat SSH startup command</summary>
+        <summary>${t("Chat SSH startup command")}</summary>
         <pre class="cron-pre">${escapeHtml(preview.chatStartupCommandLine)}</pre>
       </details>
     </section>
@@ -1381,28 +1383,28 @@ function workflowEditorView() {
     <form class="workflow-form" data-workflow-editor>
       <div class="workflow-detail-header">
         <div>
-          <h2>${isCreate ? "New Workflow" : "Edit Workflow"}</h2>
-          <p>Local preset for the active host/profile</p>
+          <h2>${isCreate ? t("New Workflow") : t("Edit Workflow")}</h2>
+          <p>${t("Local preset for the active host/profile")}</p>
         </div>
         <div class="form-actions">
-          <button class="secondary-button" type="button" data-action="cancel-workflow-edit" ${state.isSavingWorkflow ? "disabled" : ""}>${icon("undo")}<span>Cancel</span></button>
-          <button class="primary-button" type="submit" ${state.isSavingWorkflow ? "disabled" : ""}>${icon("save")}<span>${isCreate ? "Create" : "Save"}</span></button>
+          <button class="secondary-button" type="button" data-action="cancel-workflow-edit" ${state.isSavingWorkflow ? "disabled" : ""}>${icon("undo")}<span>${t("Cancel")}</span></button>
+          <button class="primary-button" type="submit" ${state.isSavingWorkflow ? "disabled" : ""}>${icon("save")}<span>${isCreate ? t("Create") : t("Save")}</span></button>
         </div>
       </div>
 
       <section class="summary-panel workflow-panel">
-        <h2>Workflow Details</h2>
-        <label><span>Name</span><input name="name" value="${escapeAttribute(draft.name)}" placeholder="Nightly release audit" autocomplete="off" /></label>
-        <label><span>Prompt</span><textarea name="prompt" rows="10">${escapeHtml(draft.prompt)}</textarea></label>
+        <h2>${t("Workflow Details")}</h2>
+        <label><span>${t("Name")}</span><input name="name" value="${escapeAttribute(draft.name)}" placeholder="${escapeAttribute(t("Nightly release audit"))}" autocomplete="off" /></label>
+        <label><span>${t("Prompt")}</span><textarea name="prompt" rows="10">${escapeHtml(draft.prompt)}</textarea></label>
       </section>
 
       <section class="summary-panel workflow-panel">
-        <h2>Assigned Skills</h2>
+        <h2>${t("Assigned Skills")}</h2>
         ${
           state.isLoadingSkills && state.skills.length === 0
-            ? `<div class="empty-state">Loading skills...</div>`
+            ? `<div class="empty-state">${t("Loading skills...")}</div>`
             : state.skills.length === 0
-              ? `<div class="empty-state">${escapeHtml(state.skillsError ?? "No discovered skills available.")}</div>`
+              ? `<div class="empty-state">${escapeHtml(state.skillsError ?? t("No discovered skills available."))}</div>`
               : `<div class="workflow-skill-picker">${state.skills.map(workflowSkillToggle).join("")}</div>`
         }
         ${
@@ -1411,7 +1413,7 @@ function workflowEditorView() {
                 ${missing.map((skill) => `
                   <div class="workflow-missing-row">
                     <span><strong>${escapeHtml(workflowSkillName(skill))}</strong><small>${escapeHtml(skill.relativePath)}</small></span>
-                    <button class="secondary-button" type="button" data-workflow-remove-skill="${escapeAttribute(skill.relativePath)}">${icon("trash")}<span>Remove</span></button>
+                    <button class="secondary-button" type="button" data-workflow-remove-skill="${escapeAttribute(skill.relativePath)}">${icon("trash")}<span>${t("Remove")}</span></button>
                   </div>
                 `).join("")}
               </div>`
@@ -1441,7 +1443,7 @@ function workflowSkillItem(skill: WorkflowSkillReference, stateLabel: "Available
     <div class="workflow-skill-item ${stateLabel === "Missing" ? "missing" : ""}">
       <strong>${escapeHtml(workflowSkillName(skill))}</strong>
       <span>${escapeHtml(skill.relativePath)}</span>
-      <em>${stateLabel}</em>
+      <em>${t(stateLabel)}</em>
     </div>
   `;
 }
@@ -1452,8 +1454,8 @@ function terminalView() {
     return `
       <section class="summary-panel terminal-panel">
         <div class="empty-state large">
-          <strong>Select a connection first</strong>
-          <span>Terminal tabs run on the active Hermes host over SSH.</span>
+          <strong>${t("Select a connection first")}</strong>
+          <span>${t("Terminal tabs run on the active Hermes host over SSH.")}</span>
         </div>
       </section>
     `;
@@ -1467,12 +1469,12 @@ function terminalView() {
           ${
             state.terminalTabs.length
               ? state.terminalTabs.map(terminalTabButton).join("")
-              : `<div class="terminal-empty-tabs">No terminal tabs</div>`
+              : `<div class="terminal-empty-tabs">${t("No terminal tabs")}</div>`
           }
         </div>
         <div class="terminal-toolbar-actions">
-          <button class="primary-button" data-action="new-terminal-tab">${icon("plus")}<span>New Tab</span></button>
-          <select data-terminal-theme title="Terminal theme">
+          <button class="primary-button" data-action="new-terminal-tab">${icon("plus")}<span>${t("New Tab")}</span></button>
+          <select data-terminal-theme title="${escapeAttribute(t("Terminal theme"))}">
             ${terminalThemeOptions()}
           </select>
         </div>
@@ -1484,19 +1486,19 @@ function terminalView() {
         ${
           selectedTab
             ? terminalLiveTabView(selectedTab)
-            : `<div class="empty-state large"><strong>No terminal tab</strong><span>Create a tab to start Hermes Chat TUI.</span></div>`
+            : `<div class="empty-state large"><strong>${t("No terminal tab")}</strong><span>${t("Create a tab to start Hermes Chat TUI.")}</span></div>`
         }
       </section>
 
       <details class="terminal-command-runner">
-        <summary>Command Runner</summary>
+        <summary>${t("Command Runner")}</summary>
         <section class="summary-panel terminal-panel">
           <div class="terminal-header">
             <div>
-              <h2>Run Once</h2>
+              <h2>${t("Run Once")}</h2>
               <p>${escapeHtml(activeDestination(active))} · ${escapeHtml(remoteHermesHomePath(active))}</p>
             </div>
-            <button class="secondary-button" data-action="clear-terminal-history" ${state.terminalHistory.length ? "" : "disabled"}>${icon("trash")}<span>Clear</span></button>
+            <button class="secondary-button" data-action="clear-terminal-history" ${state.terminalHistory.length ? "" : "disabled"}>${icon("trash")}<span>${t("Clear")}</span></button>
           </div>
 
           ${state.terminalError ? `<div class="banner error">${escapeHtml(state.terminalError)}</div>` : ""}
@@ -1504,10 +1506,10 @@ function terminalView() {
           <form class="terminal-form" data-terminal-form>
             <textarea name="terminalCommand" rows="4" spellcheck="false" ${state.isRunningTerminalCommand ? "disabled" : ""}>${escapeHtml(state.terminalCommand)}</textarea>
             <div class="terminal-actions">
-              <button class="primary-button" type="submit" ${state.isRunningTerminalCommand ? "disabled" : ""}>${icon("terminal")}<span>${state.isRunningTerminalCommand ? "Running" : "Run Command"}</span></button>
-              <button class="secondary-button" type="button" data-terminal-template="hermes --version">Hermes Version</button>
-              <button class="secondary-button" type="button" data-terminal-template="pwd && ls -la">List Directory</button>
-              <button class="secondary-button" type="button" data-terminal-template="hermes chat">Hermes Chat</button>
+              <button class="primary-button" type="submit" ${state.isRunningTerminalCommand ? "disabled" : ""}>${icon("terminal")}<span>${state.isRunningTerminalCommand ? t("Running") : t("Run Command")}</span></button>
+              <button class="secondary-button" type="button" data-terminal-template="hermes --version">${t("Hermes Version")}</button>
+              <button class="secondary-button" type="button" data-terminal-template="pwd && ls -la">${t("List Directory")}</button>
+              <button class="secondary-button" type="button" data-terminal-template="hermes chat">${t("Hermes Chat")}</button>
             </div>
           </form>
         </section>
@@ -1516,7 +1518,7 @@ function terminalView() {
           ${
             state.terminalHistory.length
               ? state.terminalHistory.map(terminalResultView).join("")
-              : `<div class="empty-state large"><strong>No command output yet</strong><span>Run a one-shot command to capture stdout, stderr, and exit code.</span></div>`
+              : `<div class="empty-state large"><strong>${t("No command output yet")}</strong><span>${t("Run a one-shot command to capture stdout, stderr, and exit code.")}</span></div>`
           }
         </section>
       </details>
@@ -1529,10 +1531,10 @@ function terminalInlineStatus(tab: TerminalLiveTab | null) {
     return "";
   }
   if (tab.status === "starting") {
-    return `<div class="inline-status terminal-inline-status">${icon("refresh")}<span>Starting terminal session...</span></div>`;
+    return `<div class="inline-status terminal-inline-status">${icon("refresh")}<span>${t("Starting terminal session...")}</span></div>`;
   }
   if (tab.initialInput && !tab.initialInputSent) {
-    return `<div class="inline-status terminal-inline-status">${icon("activity")}<span>Initial input pending</span></div>`;
+    return `<div class="inline-status terminal-inline-status">${icon("activity")}<span>${t("Initial input pending")}</span></div>`;
   }
   return "";
 }
@@ -1565,24 +1567,24 @@ function terminalLiveTabView(tab: TerminalLiveTab) {
             ? `<span class="terminal-status ${tab.exitCode === 0 ? "ok" : "failed"}">exit ${tab.exitCode}</span>`
             : `<span class="terminal-status ${tab.status}">${escapeHtml(tab.status)}</span>`
         }
-        <button class="secondary-button" data-action="reconnect-terminal-tab">${icon("refresh")}<span>Reconnect</span></button>
-        <button class="secondary-button" data-action="stop-terminal-tab" ${isRunning ? "" : "disabled"}>${icon("pause")}<span>Stop</span></button>
+        <button class="secondary-button" data-action="reconnect-terminal-tab">${icon("refresh")}<span>${t("Reconnect")}</span></button>
+        <button class="secondary-button" data-action="stop-terminal-tab" ${isRunning ? "" : "disabled"}>${icon("pause")}<span>${t("Stop")}</span></button>
       </div>
     </div>
 
-    ${tab.startupCommandLine ? `<details class="terminal-startup"><summary>Startup command</summary><pre>${escapeHtml(tab.startupCommandLine)}</pre></details>` : ""}
-    ${tab.initialInput ? `<div class="terminal-initial-input"><span>${tab.initialInputSent ? "Initial input sent" : "Initial input pending"}</span><button class="secondary-button" data-action="paste-terminal-initial-input">${icon("send")}<span>Paste Again</span></button></div>` : ""}
+    ${tab.startupCommandLine ? `<details class="terminal-startup"><summary>${t("Startup command")}</summary><pre>${escapeHtml(tab.startupCommandLine)}</pre></details>` : ""}
+    ${tab.initialInput ? `<div class="terminal-initial-input"><span>${tab.initialInputSent ? t("Initial input sent") : t("Initial input pending")}</span><button class="secondary-button" data-action="paste-terminal-initial-input">${icon("send")}<span>${t("Paste Again")}</span></button></div>` : ""}
 
     <div class="terminal-screen" data-terminal-screen data-terminal-xterm="${escapeAttribute(tab.id)}">
       <pre class="terminal-fallback">${escapeHtml(terminalDisplayOutput(tab))}</pre>
     </div>
 
     <form class="terminal-input-row" data-terminal-input-form>
-      <input name="terminalInput" autocomplete="off" spellcheck="false" value="${escapeAttribute(tab.inputDraft)}" placeholder="Type a command or raw input" ${isRunning ? "" : "disabled"} />
-      <button class="primary-button" type="submit" ${isRunning ? "" : "disabled"}>${icon("send")}<span>Send</span></button>
+      <input name="terminalInput" autocomplete="off" spellcheck="false" value="${escapeAttribute(tab.inputDraft)}" placeholder="${escapeAttribute(t("Type a command or raw input"))}" ${isRunning ? "" : "disabled"} />
+      <button class="primary-button" type="submit" ${isRunning ? "" : "disabled"}>${icon("send")}<span>${t("Send")}</span></button>
       <button class="secondary-button" type="button" data-terminal-control="enter" ${isRunning ? "" : "disabled"}>Enter</button>
       <button class="secondary-button" type="button" data-terminal-control="ctrl-c" ${isRunning ? "" : "disabled"}>Ctrl-C</button>
-      <button class="secondary-button" type="button" data-action="clear-terminal-output">${icon("trash")}<span>Clear</span></button>
+      <button class="secondary-button" type="button" data-action="clear-terminal-output">${icon("trash")}<span>${t("Clear")}</span></button>
     </form>
   `;
 }
@@ -1596,11 +1598,11 @@ function terminalResultView(result: TerminalCommandResult) {
           <strong>${escapeHtml(result.commandLine)}</strong>
           <span>${escapeHtml(formatTimestamp(result.startedAt))} · exit ${result.exitCode}</span>
         </div>
-        <button class="secondary-button" data-terminal-rerun="${escapeAttribute(result.commandLine)}">${icon("refresh")}<span>Rerun</span></button>
+        <button class="secondary-button" data-terminal-rerun="${escapeAttribute(result.commandLine)}">${icon("refresh")}<span>${t("Rerun")}</span></button>
       </header>
       ${result.stdout.trim() ? `<pre>${escapeHtml(stripTerminalArtifacts(result.stdout))}</pre>` : ""}
       ${result.stderr.trim() ? `<pre class="terminal-stderr">${escapeHtml(stripTerminalArtifacts(result.stderr))}</pre>` : ""}
-      ${!result.stdout.trim() && !result.stderr.trim() ? `<div class="empty-state">Command produced no output.</div>` : ""}
+      ${!result.stdout.trim() && !result.stderr.trim() ? `<div class="empty-state">${t("Command produced no output.")}</div>` : ""}
     </article>
   `;
 }
@@ -1621,12 +1623,12 @@ function terminalDisplayOutput(tab: TerminalLiveTab) {
     return output;
   }
   if (tab.status === "starting") {
-    return "Starting SSH terminal session...";
+    return t("Starting SSH terminal session...");
   }
   if (tab.status === "exited") {
-    return `Terminal exited with code ${tab.exitCode ?? -1}.`;
+    return tf("Terminal exited with code %@.", tab.exitCode ?? -1);
   }
-  return "Connected. Waiting for terminal output...";
+  return t("Connected. Waiting for terminal output...");
 }
 
 interface TerminalThemePreset {
@@ -1711,12 +1713,8 @@ function mountTerminalRenderer() {
     }
 
     const observer = new ResizeObserver(() => {
-      try {
-        if (renderer && renderer.container && renderer.container.clientWidth > 0) {
-          renderer.fitAddon.fit();
-        }
-      } catch {
-        // Fitting is best-effort
+      if (renderer && renderer.container && renderer.container.clientWidth > 0) {
+        fitAndSyncTerminalSize(renderer);
       }
     });
     observer.observe(container);
@@ -1728,10 +1726,8 @@ function mountTerminalRenderer() {
     renderer.writtenLength = tab.output.length;
   }
   requestAnimationFrame(() => {
-    try {
-      renderer?.fitAddon.fit();
-    } catch {
-      // Fitting is best-effort because hidden panels can report zero geometry.
+    if (renderer) {
+      fitAndSyncTerminalSize(renderer);
     }
   });
 }
@@ -1761,7 +1757,35 @@ function createTerminalRenderer(tab: TerminalLiveTab): TerminalRenderer {
     container: null,
     disposeDataHandler,
     writtenLength: 0,
+    syncedCols: 0,
+    syncedRows: 0,
   };
+}
+
+function fitAndSyncTerminalSize(renderer: TerminalRenderer) {
+  try {
+    renderer.fitAddon.fit();
+  } catch {
+    // Fitting is best-effort because hidden panels can report zero geometry.
+    return;
+  }
+  syncTerminalSize(renderer);
+}
+
+function syncTerminalSize(renderer: TerminalRenderer) {
+  const cols = renderer.terminal.cols;
+  const rows = renderer.terminal.rows;
+  if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols < 2 || rows < 1) {
+    return;
+  }
+  if (renderer.syncedCols === cols && renderer.syncedRows === rows) {
+    return;
+  }
+  renderer.syncedCols = cols;
+  renderer.syncedRows = rows;
+  void resizeTerminalSession(renderer.tabId, cols, rows).catch(() => {
+    // Resize races are expected when a terminal exits while the panel is resizing.
+  });
 }
 
 function writeTerminalRendererData(tabId: string, data: string) {
@@ -1794,11 +1818,51 @@ function disposeAllTerminalRenderers() {
 
 function xtermTheme() {
   const theme = terminalTheme();
-  return {
+  const baseTheme = {
     background: theme.background,
     foreground: theme.foreground,
     cursor: theme.foreground,
     selectionBackground: `${theme.foreground}44`,
+  };
+  if (theme.id === "paper" || theme.id === "porcelain") {
+    return {
+      ...baseTheme,
+      black: "#1f2933",
+      red: "#b42318",
+      green: "#0f7b3a",
+      yellow: "#8a6200",
+      blue: "#1d4ed8",
+      magenta: "#8b3db4",
+      cyan: "#0f766e",
+      white: "#f8fafc",
+      brightBlack: "#667085",
+      brightRed: "#d92d20",
+      brightGreen: "#16a34a",
+      brightYellow: "#a16207",
+      brightBlue: "#2563eb",
+      brightMagenta: "#a855f7",
+      brightCyan: "#0891b2",
+      brightWhite: "#ffffff",
+    };
+  }
+  return {
+    ...baseTheme,
+    black: "#111111",
+    red: "#ff7b72",
+    green: "#83d58d",
+    yellow: "#d4e815",
+    blue: "#8ab4ff",
+    magenta: "#d2a8ff",
+    cyan: "#7dd3fc",
+    white: "#f0f0f0",
+    brightBlack: "#777777",
+    brightRed: "#ffa198",
+    brightGreen: "#a7f3b7",
+    brightYellow: "#f2e85c",
+    brightBlue: "#a7c7ff",
+    brightMagenta: "#e4c8ff",
+    brightCyan: "#a5f3fc",
+    brightWhite: "#ffffff",
   };
 }
 
@@ -3432,7 +3496,12 @@ function bindEvents() {
       render();
       return;
     }
-    updateTerminalTab(tab.id, { inputDraft: "" });
+    form.reset();
+    const inputElement = form.elements.namedItem("terminalInput");
+    if (inputElement instanceof HTMLInputElement) {
+      inputElement.value = "";
+    }
+    updateTerminalTab(tab.id, { inputDraft: "" }, false);
     void sendTerminalInput(tab.id, `${input}\r`);
   });
 
@@ -4468,27 +4537,11 @@ function toggleAppTheme() {
   state = {
     ...state,
     appTheme,
-    terminalThemeStyle: terminalThemeStyleForAppTheme(appTheme, state.terminalThemeStyle),
     status: t("Theme updated."),
     error: null,
   };
   render();
   scrollTerminalToBottom();
-}
-
-function terminalThemeStyleForAppTheme(appTheme: AppTheme, current: TerminalThemeStyle): TerminalThemeStyle {
-  if (current === "custom") {
-    return current;
-  }
-  const darkThemes: TerminalThemeStyle[] = ["graphite", "evergreen", "dusk", "aubergine"];
-  const lightThemes: TerminalThemeStyle[] = ["paper", "porcelain"];
-  if (appTheme === "dark" && lightThemes.includes(current)) {
-    return "graphite";
-  }
-  if (appTheme === "light" && darkThemes.includes(current)) {
-    return "paper";
-  }
-  return current;
 }
 
 function shouldRunAutomaticUpdateCheck() {
