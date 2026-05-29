@@ -1160,6 +1160,7 @@ mod smoke_tests {
             created_at: now,
             updated_at: now,
             last_connected_at: None,
+            is_local: false,
         })
     }
 

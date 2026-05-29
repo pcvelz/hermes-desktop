@@ -167,13 +167,17 @@ pub fn start_terminal_session_inner(
     let normalized_initial_input = initial_input
         .map(|value| value.trim_end_matches(['\r', '\n']).to_string())
         .filter(|value| !value.is_empty());
-    let mut remote_command =
-        remote_shell_bootstrap_command(&profile, normalized_startup.as_deref());
-    if let (Some(c), Some(r)) = (cols, rows) {
-        remote_command = format!("stty cols {} rows {} 2>/dev/null; {}", c, r, remote_command);
-    }
-    let arguments = ssh::shell_arguments(&profile, Some(remote_command), true);
-    let spawn = spawn_interactive_ssh(arguments, cols, rows)?;
+    let spawn = if profile.is_local {
+        spawn_interactive_local(normalized_startup.as_deref(), cols, rows)?
+    } else {
+        let mut remote_command =
+            remote_shell_bootstrap_command(&profile, normalized_startup.as_deref());
+        if let (Some(c), Some(r)) = (cols, rows) {
+            remote_command = format!("stty cols {} rows {} 2>/dev/null; {}", c, r, remote_command);
+        }
+        let arguments = ssh::shell_arguments(&profile, Some(remote_command), true);
+        spawn_interactive_ssh(arguments, cols, rows)?
+    };
     let process = spawn.process.clone();
 
     state
@@ -315,6 +319,89 @@ fn spawn_interactive_ssh(
     {
         spawn_interactive_ssh_with_pipes(arguments)
     }
+}
+
+/// Spawn a local interactive login shell in a PTY (local transport, no SSH).
+#[cfg(unix)]
+fn spawn_interactive_local(
+    startup_command_line: Option<&str>,
+    cols: Option<u16>,
+    rows: Option<u16>,
+) -> Result<TerminalSpawn> {
+    use crate::connection::{
+        remote_hermes_home_shell_expression, remote_hermes_search_path_shell_expression,
+    };
+    use crate::models::ConnectionProfile;
+
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let (master, slave) = open_pty(cols, rows)?;
+    let stdin_fd = slave
+        .try_clone()
+        .map_err(|error| HermesError::Launch(error.to_string()))?;
+    let stdout_fd = slave
+        .try_clone()
+        .map_err(|error| HermesError::Launch(error.to_string()))?;
+    let stderr_fd = slave;
+
+    // Use a default profile to resolve the default ~/.hermes home/path expressions.
+    let default_profile = ConnectionProfile::default();
+    let hermes_home_expr = remote_hermes_home_shell_expression(&default_profile);
+    let path_expr = remote_hermes_search_path_shell_expression(&default_profile);
+
+    let mut cmd = Command::new(&shell);
+    cmd.env("TERM", "xterm-256color")
+        .env("COLORTERM", "truecolor")
+        .stdin(Stdio::from(stdin_fd))
+        .stdout(Stdio::from(stdout_fd))
+        .stderr(Stdio::from(stderr_fd));
+
+    match startup_command_line.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(startup) => {
+            // Run startup command then drop into a login shell.
+            let exec_cmd = format!(
+                "export HERMES_HOME=\"{}\"; export PATH=\"{}\"; {}; exec {} -l",
+                hermes_home_expr, path_expr, startup, shell
+            );
+            cmd.arg("-lc").arg(exec_cmd);
+        }
+        None => {
+            cmd.arg("-l")
+                .env("HERMES_HOME", &hermes_home_expr)
+                .env("PATH", &path_expr);
+        }
+    }
+
+    let child = cmd
+        .spawn()
+        .map_err(|error| HermesError::Launch(error.to_string()))?;
+
+    let master_writer = master
+        .try_clone()
+        .map_err(|error| HermesError::Launch(error.to_string()))?;
+    let master_resizer = master
+        .try_clone()
+        .map_err(|error| HermesError::Launch(error.to_string()))?;
+    let child = Arc::new(Mutex::new(child));
+    Ok(TerminalSpawn {
+        process: TerminalProcess {
+            child,
+            stdin: Arc::new(Mutex::new(TerminalInput::Pty(master_writer))),
+            resize: TerminalResizeHandle::Pty(Arc::new(Mutex::new(master_resizer))),
+        },
+        stdout: Box::new(master),
+        stderr: None,
+    })
+}
+
+#[cfg(not(unix))]
+fn spawn_interactive_local(
+    _startup_command_line: Option<&str>,
+    _cols: Option<u16>,
+    _rows: Option<u16>,
+) -> Result<TerminalSpawn> {
+    Err(HermesError::Validation(
+        "Local terminal sessions are only supported on macOS and Linux.".to_string(),
+    ))
 }
 
 #[cfg(unix)]
@@ -726,6 +813,9 @@ fn terminal_title(profile: &ConnectionProfile, startup_command_line: Option<&str
 }
 
 fn terminal_destination(profile: &ConnectionProfile) -> String {
+    if profile.is_local {
+        return "localhost".to_string();
+    }
     let target = effective_target(profile);
     if profile.ssh_user.trim().is_empty() {
         target

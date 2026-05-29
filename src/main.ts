@@ -957,6 +957,7 @@ function connectionsView() {
 
 function connectionEditor() {
   const profile = state.editor ?? newConnection();
+  const isLocal = profile.isLocal ?? false;
   return `
     <form class="connection-form">
       <div class="panel-heading">
@@ -973,32 +974,39 @@ function connectionEditor() {
         <input name="label" value="${escapeAttribute(profile.label)}" autocomplete="off" required />
       </label>
 
-      <div class="form-grid">
-        <label>
-          <span>SSH alias</span>
-          <input name="sshAlias" value="${escapeAttribute(profile.sshAlias)}" autocomplete="off" />
-        </label>
-        <label>
-          <span>Host or IP</span>
-          <input name="sshHost" value="${escapeAttribute(profile.sshHost)}" autocomplete="off" />
-        </label>
-      </div>
-
-      <div class="form-grid">
-        <label>
-          <span>User</span>
-          <input name="sshUser" value="${escapeAttribute(profile.sshUser)}" autocomplete="username" />
-        </label>
-        <label>
-          <span>Port</span>
-          <input name="sshPort" value="${escapeAttribute(profile.sshPort?.toString() ?? "")}" inputmode="numeric" />
-        </label>
-      </div>
-
-      <label>
-        <span>SSH password (not saved)</span>
-        <input name="sshPassword" type="password" value="${escapeAttribute(profile.sshPassword ?? "")}" autocomplete="current-password" placeholder="Optional for hosts without SSH keys" />
+      <label class="checkbox-label">
+        <input type="checkbox" name="isLocal" ${isLocal ? "checked" : ""} data-local-toggle />
+        <span>On this machine (local — no SSH needed)</span>
       </label>
+
+      <div class="ssh-fields" ${isLocal ? 'style="display:none"' : ""}>
+        <div class="form-grid">
+          <label>
+            <span>SSH alias</span>
+            <input name="sshAlias" value="${escapeAttribute(profile.sshAlias)}" autocomplete="off" />
+          </label>
+          <label>
+            <span>Host or IP</span>
+            <input name="sshHost" value="${escapeAttribute(profile.sshHost)}" autocomplete="off" />
+          </label>
+        </div>
+
+        <div class="form-grid">
+          <label>
+            <span>User</span>
+            <input name="sshUser" value="${escapeAttribute(profile.sshUser)}" autocomplete="username" />
+          </label>
+          <label>
+            <span>Port</span>
+            <input name="sshPort" value="${escapeAttribute(profile.sshPort?.toString() ?? "")}" inputmode="numeric" />
+          </label>
+        </div>
+
+        <label>
+          <span>SSH password (not saved)</span>
+          <input name="sshPassword" type="password" value="${escapeAttribute(profile.sshPassword ?? "")}" autocomplete="current-password" placeholder="Optional for hosts without SSH keys" />
+        </label>
+      </div>
 
       <div class="form-grid">
         <label>
@@ -3244,15 +3252,17 @@ function importedConnectionProfile(value: unknown): ConnectionProfile | null {
   }
   const now = new Date().toISOString();
   const label = stringValue(value.label);
+  const isLocal = Boolean(value.isLocal);
   const sshHost = stringValue(value.sshHost);
-  if (!label || !sshHost) {
+  if (!label || (!isLocal && !sshHost)) {
     return null;
   }
   return {
     id: stringValue(value.id) || randomId(),
     label,
+    isLocal,
     sshAlias: stringValue(value.sshAlias) ?? "",
-    sshHost,
+    sshHost: sshHost ?? "",
     sshPort: typeof value.sshPort === "number" ? value.sshPort : null,
     sshUser: stringValue(value.sshUser) ?? "",
     sshPassword: null,
@@ -3781,6 +3791,14 @@ function bindEvents() {
         void selectWorkspaceFile(fileId);
       }
     });
+  });
+
+  app.querySelector<HTMLInputElement>("[data-local-toggle]")?.addEventListener("change", (event) => {
+    const checkbox = event.currentTarget as HTMLInputElement;
+    const sshFields = app.querySelector<HTMLElement>(".ssh-fields");
+    if (sshFields) {
+      sshFields.style.display = checkbox.checked ? "none" : "";
+    }
   });
 
   app.querySelector<HTMLFormElement>(".connection-form")?.addEventListener("submit", (event) => {
@@ -7098,14 +7116,16 @@ function readProfileForm(form: HTMLFormElement): ConnectionProfile {
   if (portValue && Number(portValue) > 65535) {
     throw new Error(t("Port must be 65535 or lower."));
   }
+  const isLocal = data.get("isLocal") === "on";
   return {
     ...profile,
     label: String(data.get("label") ?? ""),
-    sshAlias: String(data.get("sshAlias") ?? ""),
-    sshHost: String(data.get("sshHost") ?? ""),
-    sshPort: portValue ? Number(portValue) : null,
-    sshUser: String(data.get("sshUser") ?? ""),
-    sshPassword: sshPassword ? sshPassword : null,
+    isLocal,
+    sshAlias: isLocal ? "" : String(data.get("sshAlias") ?? ""),
+    sshHost: isLocal ? "" : String(data.get("sshHost") ?? ""),
+    sshPort: isLocal ? null : (portValue ? Number(portValue) : null),
+    sshUser: isLocal ? "" : String(data.get("sshUser") ?? ""),
+    sshPassword: isLocal ? null : (sshPassword ? sshPassword : null),
     hermesProfile: optionalString(data.get("hermesProfile")),
     customHermesHomePath: optionalString(data.get("customHermesHomePath")),
   };
@@ -7116,6 +7136,7 @@ function newConnection(): ConnectionProfile {
   return {
     id: crypto.randomUUID(),
     label: "",
+    isLocal: false,
     sshAlias: "",
     sshHost: "",
     sshPort: null,
@@ -8252,6 +8273,9 @@ function titleCase(value: string) {
 }
 
 function activeDestination(connection: ConnectionProfile) {
+  if (connection.isLocal) {
+    return "this machine (local)";
+  }
   const target = connection.sshAlias || connection.sshHost;
   return connection.sshUser ? `${connection.sshUser}@${target}` : target;
 }

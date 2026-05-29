@@ -83,7 +83,7 @@ pub fn normalize_profile(mut profile: ConnectionProfile) -> Result<ConnectionPro
     validate_ssh_argument(optional_non_empty(&profile.ssh_host), "Host")?;
     validate_ssh_argument(optional_non_empty(&profile.ssh_user), "SSH user")?;
 
-    if effective_target(&profile).is_empty() {
+    if !profile.is_local && effective_target(&profile).is_empty() {
         return Err(HermesError::Validation(
             "Add an SSH alias or host.".to_string(),
         ));
@@ -161,6 +161,9 @@ pub fn remote_hermes_home_path(profile: &ConnectionProfile) -> String {
 }
 
 pub fn workspace_scope_fingerprint(profile: &ConnectionProfile) -> String {
+    if profile.is_local {
+        return ["local", "", "", &remote_hermes_home_path(profile)].join("|");
+    }
     [
         effective_target(profile),
         profile.ssh_user.trim().to_string(),
@@ -454,6 +457,17 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Hermes profile must be a profile name"));
+    }
+
+    #[test]
+    fn local_profile_does_not_require_ssh_host_or_alias() {
+        let mut profile = ConnectionProfile::default();
+        profile.label = "Local Hermes".to_string();
+        profile.is_local = true;
+        // No sshHost, no sshAlias — should normalize fine.
+        let normalized = normalize_profile(profile).expect("local profile should normalize");
+        assert!(normalized.is_local);
+        assert_eq!(workspace_scope_fingerprint(&normalized), "local|||~/.hermes");
     }
 
     #[test]

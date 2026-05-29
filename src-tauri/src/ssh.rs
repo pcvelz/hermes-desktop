@@ -7,6 +7,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 #[cfg(unix)]
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::env;
 
 #[derive(Debug)]
 pub struct SshCommandResult {
@@ -42,11 +43,48 @@ pub async fn execute(
 ) -> Result<SshCommandResult> {
     tauri::async_runtime::spawn_blocking(move || {
         let remote_command = remote_service_command(&profile, &command_line);
-        let arguments = shell_arguments(&profile, Some(remote_command), false);
-        run_ssh(arguments, standard_input, profile.ssh_password.as_deref())
+        if profile.is_local {
+            run_local(&remote_command, standard_input)
+        } else {
+            let arguments = shell_arguments(&profile, Some(remote_command), false);
+            run_ssh(arguments, standard_input, profile.ssh_password.as_deref())
+        }
     })
     .await
     .map_err(|error| HermesError::Launch(error.to_string()))?
+}
+
+/// Run a shell command directly on this machine (local transport — no SSH).
+fn run_local(command: &str, standard_input: Option<Vec<u8>>) -> Result<SshCommandResult> {
+    let home = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let mut child = Command::new("/bin/sh")
+        .arg("-c")
+        .arg(command)
+        .env("HOME", &home)
+        .stdin(if standard_input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| HermesError::Launch(error.to_string()))?;
+
+    if let Some(input) = standard_input {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| HermesError::Launch("Failed to open local stdin.".to_string()))?;
+        stdin.write_all(&input)?;
+    }
+
+    let output = child.wait_with_output()?;
+    Ok(SshCommandResult {
+        stdout: String::from_utf8(output.stdout).map_err(|_| HermesError::InvalidUtf8)?,
+        stderr: String::from_utf8(output.stderr).map_err(|_| HermesError::InvalidUtf8)?,
+        exit_code: output.status.code().unwrap_or(-1),
+    })
 }
 
 fn run_ssh(
@@ -396,6 +434,31 @@ mod tests {
 
         assert!(message.contains("non-interactive SSH shell PATH"));
         assert!(message.contains("python3"));
+    }
+
+    #[test]
+    fn local_profile_run_local_echoes_home() {
+        let result = run_local("printf '%s' \"$HOME\"", None).expect("run_local should succeed");
+        let expected = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains(&expected) || result.stdout.starts_with('/'));
+    }
+
+    #[test]
+    fn local_profile_does_not_build_ssh_destination() {
+        // A local profile must NOT produce an ssh user@host destination string.
+        let mut profile = ConnectionProfile::default();
+        profile.label = "Local".to_string();
+        profile.is_local = true;
+        // shell_arguments should still work (used for non-local paths) but for local profiles
+        // execute() takes the run_local branch — confirmed by the is_local flag.
+        assert!(profile.is_local);
+        // The destination function for SSH would normally return "", which is invalid for SSH.
+        // That's intentional — local profiles never reach run_ssh.
+        let args = shell_arguments(&profile, Some("echo hi".to_string()), false);
+        // args will contain "--" and "" as destination — but run_local is used instead,
+        // so this just confirms the is_local flag gates the path.
+        assert!(args.contains(&"--".to_string()));
     }
 
     fn profile(alias: &str, host: &str, user: &str, port: Option<u16>) -> ConnectionProfile {

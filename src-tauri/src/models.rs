@@ -44,7 +44,9 @@ impl Default for AppPreferences {
 }
 
 fn default_automatic_update_checks() -> bool {
-    true
+    // Local fork: automatic GitHub release-checks disabled by default.
+    // Updates are pulled manually via the `herm_desktop_update` shell function.
+    false
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,6 +65,9 @@ pub struct ConnectionProfile {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub last_connected_at: Option<DateTime<Utc>>,
+    /// When true, commands run directly on this machine via /bin/sh instead of over SSH.
+    #[serde(default)]
+    pub is_local: bool,
 }
 
 impl Default for ConnectionProfile {
@@ -81,6 +86,7 @@ impl Default for ConnectionProfile {
             created_at: now,
             updated_at: now,
             last_connected_at: None,
+            is_local: false,
         }
     }
 }

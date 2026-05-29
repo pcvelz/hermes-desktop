@@ -26,6 +26,8 @@ export interface ConnectionProfile {
   createdAt: string;
   updatedAt: string;
   lastConnectedAt: string | null;
+  /** When true, commands run directly on this machine instead of over SSH. */
+  isLocal?: boolean;
 }
 
 export interface RemoteDiscovery {
