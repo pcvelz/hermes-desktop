@@ -216,7 +216,8 @@ mod tests {
 
         assert!(snapshot.connections.is_empty());
         assert!(snapshot.preferences.active_connection_id.is_none());
-        assert!(snapshot.preferences.automatically_checks_for_updates);
+        // Fork default: automatic update checks are disabled (see default_automatic_update_checks).
+        assert!(!snapshot.preferences.automatically_checks_for_updates);
         assert!(snapshot.preferences.workspace_file_bookmarks.is_empty());
         assert!(snapshot.preferences.pinned_sessions.is_empty());
     }
@@ -256,7 +257,8 @@ mod tests {
             preferences.active_connection_id
         );
         assert_eq!(loaded.app_locale.as_deref(), Some("ru"));
-        assert!(loaded.automatically_checks_for_updates);
+        // Fork default: automatic update checks are disabled.
+        assert!(!loaded.automatically_checks_for_updates);
     }
 
     #[cfg(unix)]
