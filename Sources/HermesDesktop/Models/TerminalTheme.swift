@@ -12,21 +12,38 @@ enum TerminalThemeStyle: String, Codable, Equatable {
     case custom
 }
 
-struct TerminalThemeHSB: Equatable {
+struct TerminalThemeHSB: Equatable, Hashable {
     let hue: Double
     let saturation: Double
     let brightness: Double
 }
 
 struct TerminalThemeColor: Codable, Equatable, Hashable {
-    var red: Double
-    var green: Double
-    var blue: Double
+    let red: Double
+    let green: Double
+    let blue: Double
+    let hexString: String
+    let hsb: TerminalThemeHSB
+
+    // Backward-compatible wire format: only the raw RGB channels are encoded.
+    // Derived values (hexString, hsb) are recomputed on decode so previously
+    // persisted themes keep loading after the model gains cached properties.
+    private enum CodingKeys: String, CodingKey {
+        case red, green, blue
+    }
 
     init(red: Double, green: Double, blue: Double) {
-        self.red = Self.clamp(red)
-        self.green = Self.clamp(green)
-        self.blue = Self.clamp(blue)
+        let r = Self.clamp(red)
+        let g = Self.clamp(green)
+        let b = Self.clamp(blue)
+        self.red = r
+        self.green = g
+        self.blue = b
+        self.hexString = String(
+            format: "#%06X",
+            (Self.rgbComponent(r) << 16) | (Self.rgbComponent(g) << 8) | Self.rgbComponent(b)
+        )
+        self.hsb = Self.computeHSB(red: r, green: g, blue: b)
     }
 
     init(hex: Int) {
@@ -84,6 +101,22 @@ struct TerminalThemeColor: Codable, Equatable, Hashable {
         )
     }
 
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            red: try container.decode(Double.self, forKey: .red),
+            green: try container.decode(Double.self, forKey: .green),
+            blue: try container.decode(Double.self, forKey: .blue)
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(red, forKey: .red)
+        try container.encode(green, forKey: .green)
+        try container.encode(blue, forKey: .blue)
+    }
+
     var nsColor: NSColor {
         NSColor(
             deviceRed: red,
@@ -94,14 +127,16 @@ struct TerminalThemeColor: Codable, Equatable, Hashable {
     }
 
     var swiftUIColor: Color {
-        Color(nsColor: nsColor)
+        // Use the static sRGB initializer rather than Color(nsColor:) so the
+        // SwiftUI color box is value-comparable and not re-resolved on every
+        // body re-evaluation. Color(nsColor:) is a dynamic, appearance-aware
+        // wrapper that creates a new storage instance each access, which
+        // prevented SwiftUI from short-circuiting unchanged cells in the
+        // 200-swatch color matrix in Settings.
+        Color(red: red, green: green, blue: blue)
     }
 
-    var hexString: String {
-        String(format: "#%06X", hexValue)
-    }
-
-    var hsb: TerminalThemeHSB {
+    private static func computeHSB(red: Double, green: Double, blue: Double) -> TerminalThemeHSB {
         let maxComponent = max(red, green, blue)
         let minComponent = min(red, green, blue)
         let delta = maxComponent - minComponent
@@ -125,12 +160,6 @@ struct TerminalThemeColor: Codable, Equatable, Hashable {
             saturation: saturation,
             brightness: brightness
         )
-    }
-
-    private var hexValue: Int {
-        (Self.rgbComponent(red) << 16) |
-            (Self.rgbComponent(green) << 8) |
-            Self.rgbComponent(blue)
     }
 
     private static func clamp(_ value: Double) -> Double {
