@@ -15,6 +15,21 @@ final class ConnectionStore: ObservableObject {
             persistPreferencesIfNeeded()
         }
     }
+    @Published var terminalFontSize: Double = TerminalFontPreference.defaultSize {
+        didSet {
+            let clampedFontSize = TerminalFontPreference.clamped(terminalFontSize)
+            if terminalFontSize != clampedFontSize {
+                terminalFontSize = clampedFontSize
+                return
+            }
+            persistPreferencesIfNeeded()
+        }
+    }
+    @Published var appAppearance: AppAppearancePreference = .system {
+        didSet {
+            persistPreferencesIfNeeded()
+        }
+    }
     @Published var automaticallyChecksForUpdates = true {
         didSet {
             persistPreferencesIfNeeded()
@@ -36,6 +51,11 @@ final class ConnectionStore: ObservableObject {
         }
     }
     @Published private(set) var workflows: [WorkflowPreset] = [] {
+        didSet {
+            persistPreferencesIfNeeded()
+        }
+    }
+    @Published private(set) var hiddenHermesProfiles: [HiddenHermesProfilePreference] = [] {
         didSet {
             persistPreferencesIfNeeded()
         }
@@ -193,6 +213,29 @@ final class ConnectionStore: ObservableObject {
         workflows.removeAll { $0.id == id }
     }
 
+    func isHermesProfileHidden(name: String, hostConnectionFingerprint: String) -> Bool {
+        hiddenHermesProfiles.contains {
+            $0.hostConnectionFingerprint == hostConnectionFingerprint &&
+                $0.profileName == name
+        }
+    }
+
+    func hideHermesProfile(name: String, hostConnectionFingerprint: String) {
+        let preference = HiddenHermesProfilePreference(
+            hostConnectionFingerprint: hostConnectionFingerprint,
+            profileName: name
+        )
+        guard !hiddenHermesProfiles.contains(preference) else { return }
+        hiddenHermesProfiles.append(preference)
+    }
+
+    func showHermesProfile(name: String, hostConnectionFingerprint: String) {
+        hiddenHermesProfiles.removeAll {
+            $0.hostConnectionFingerprint == hostConnectionFingerprint &&
+                $0.profileName == name
+        }
+    }
+
     private func load() {
         isHydratingFromDisk = true
         defer { isHydratingFromDisk = false }
@@ -215,15 +258,18 @@ final class ConnectionStore: ObservableObject {
     }
 
     private func savePreferences() {
-        let preferences = AppPreferences(
-            lastConnectionID: lastConnectionID,
-            terminalTheme: terminalTheme,
-            automaticallyChecksForUpdates: automaticallyChecksForUpdates,
-            lastAutomaticUpdateCheckAt: lastAutomaticUpdateCheckAt,
-            workspaceFileBookmarks: workspaceFileBookmarks,
-            pinnedSessions: pinnedSessions,
-            workflows: workflows
-        )
+            let preferences = AppPreferences(
+                lastConnectionID: lastConnectionID,
+                terminalTheme: terminalTheme,
+                terminalFontSize: terminalFontSize,
+                appAppearance: appAppearance,
+                automaticallyChecksForUpdates: automaticallyChecksForUpdates,
+                lastAutomaticUpdateCheckAt: lastAutomaticUpdateCheckAt,
+                workspaceFileBookmarks: workspaceFileBookmarks,
+                pinnedSessions: pinnedSessions,
+                workflows: workflows,
+                hiddenHermesProfiles: hiddenHermesProfiles
+            )
 
         do {
             paths.ensureApplicationSupportDirectory()
@@ -278,11 +324,14 @@ final class ConnectionStore: ObservableObject {
             AppPreferences(
                 lastConnectionID: nil,
                 terminalTheme: .defaultValue,
+                terminalFontSize: TerminalFontPreference.defaultSize,
+                appAppearance: .system,
                 automaticallyChecksForUpdates: true,
                 lastAutomaticUpdateCheckAt: nil,
                 workspaceFileBookmarks: [],
                 pinnedSessions: [],
-                workflows: []
+                workflows: [],
+                hiddenHermesProfiles: []
             )
         )
     }
@@ -290,11 +339,14 @@ final class ConnectionStore: ObservableObject {
     private func applyPreferences(_ preferences: AppPreferences) {
         lastConnectionID = preferences.lastConnectionID
         terminalTheme = preferences.terminalTheme ?? .defaultValue
+        terminalFontSize = TerminalFontPreference.clamped(preferences.terminalFontSize ?? TerminalFontPreference.defaultSize)
+        appAppearance = preferences.appAppearance ?? .system
         automaticallyChecksForUpdates = preferences.automaticallyChecksForUpdates ?? true
         lastAutomaticUpdateCheckAt = preferences.lastAutomaticUpdateCheckAt
         workspaceFileBookmarks = preferences.workspaceFileBookmarks ?? []
         pinnedSessions = preferences.pinnedSessions ?? []
         workflows = preferences.workflows ?? []
+        hiddenHermesProfiles = preferences.hiddenHermesProfiles ?? []
     }
 
     private func reportPersistenceError(_ message: String) {
@@ -309,11 +361,14 @@ final class ConnectionStore: ObservableObject {
 private struct AppPreferences: Codable {
     var lastConnectionID: UUID?
     var terminalTheme: TerminalThemePreference?
+    var terminalFontSize: Double?
+    var appAppearance: AppAppearancePreference?
     var automaticallyChecksForUpdates: Bool?
     var lastAutomaticUpdateCheckAt: Date?
     var workspaceFileBookmarks: [WorkspaceFileBookmark]?
     var pinnedSessions: [PinnedSession]?
     var workflows: [WorkflowPreset]?
+    var hiddenHermesProfiles: [HiddenHermesProfilePreference]?
 }
 
 private extension String {

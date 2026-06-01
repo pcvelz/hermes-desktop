@@ -5,4 +5,5 @@ struct TerminalWorkspaceContext {
     let activeWorkspaceScopeFingerprint: String?
     let isTerminalSectionActive: Bool
     let terminalTheme: TerminalThemePreference
+    let terminalFontSize: Double
 }

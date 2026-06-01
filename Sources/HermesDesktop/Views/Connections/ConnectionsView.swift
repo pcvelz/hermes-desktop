@@ -1,60 +1,40 @@
 import SwiftUI
 
 struct ConnectionsView: View {
+    @Environment(\.openURL) private var openURL
     @EnvironmentObject private var appState: AppState
 
     @State private var editingConnection = ConnectionProfile()
     @State private var editorPresentationID = UUID()
     @State private var isPresentingEditor = false
     @State private var editingExistingConnection = false
+    @State private var isPresentingProfiles = false
+    @State private var inspectorTab: SettingsInspectorTab = .overview
+    @State private var profilePendingDelete: RemoteHermesProfile?
+    @State private var profilePendingStopTracking: RemoteHermesProfile?
+
+    private let documentationURL = URL(string: "https://dodo-reach.github.io/hermes-desktop/")!
 
     var body: some View {
-        HermesPageContainer(width: .standard) {
-            VStack(alignment: .leading, spacing: 24) {
+        HermesPageContainer(width: .dashboard) {
+            VStack(alignment: .leading, spacing: 22) {
                 HermesPageHeader(
-                    title: "Hosts",
-                    subtitle: "Alias-first SSH profiles for every Hermes workspace, from a Raspberry Pi to another Mac or a remote VPS."
-                ) {
-                    Button {
-                        presentEditor(for: ConnectionProfile(), isEditing: false)
-                    } label: {
-                        Label(L10n.string("Add Host"), systemImage: "plus")
+                    title: "Settings",
+                    subtitle: "Manage the active host connection, Hermes profile, and local app preferences."
+                )
+
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 20) {
+                        settingsColumn
+                            .frame(minWidth: 520, maxWidth: .infinity, alignment: .topLeading)
+
+                        inspectorPanel
+                            .frame(width: 430, alignment: .topLeading)
                     }
-                    .buttonStyle(.borderedProminent)
-                }
 
-                if appState.connectionStore.connections.isEmpty {
-                    HermesSurfacePanel {
-                        VStack(alignment: .leading, spacing: 18) {
-                            ContentUnavailableView(
-                                L10n.string("No hosts yet"),
-                                systemImage: "network.slash",
-                                description: Text(L10n.string("Create your first SSH profile to connect Hermes Desktop to a Raspberry Pi, another Mac, a VPS, or this Mac via localhost."))
-                            )
-
-                            Button {
-                                presentEditor(for: ConnectionProfile(), isEditing: false)
-                            } label: {
-                                Label(L10n.string("Add First Host"), systemImage: "plus")
-                            }
-                            .buttonStyle(.borderedProminent)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 280)
-                    }
-                } else {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(alignment: .top, spacing: 16) {
-                            hostsPanel
-                                .frame(minWidth: 640, maxWidth: .infinity)
-
-                            connectionGuidePanel
-                                .frame(width: 320)
-                        }
-
-                        VStack(alignment: .leading, spacing: 16) {
-                            hostsPanel
-                            connectionGuidePanel
-                        }
+                    VStack(alignment: .leading, spacing: 18) {
+                        settingsColumn
+                        inspectorPanel
                     }
                 }
             }
@@ -69,78 +49,492 @@ struct ConnectionsView: View {
             }
             .id(editorPresentationID)
         }
+        .sheet(isPresented: $isPresentingProfiles) {
+            ManageProfilesSheet(
+                profiles: allDiscoveredProfiles,
+                activeProfileName: appState.activeConnection?.resolvedHermesProfileName,
+                hostConnectionFingerprint: appState.activeConnection?.hostConnectionFingerprint,
+                isBusy: appState.isBusy,
+                isHidden: { profile in
+                    guard let hostFingerprint = appState.activeConnection?.hostConnectionFingerprint else { return false }
+                    return appState.connectionStore.isHermesProfileHidden(
+                        name: profile.name,
+                        hostConnectionFingerprint: hostFingerprint
+                    )
+                },
+                onDelete: { profile in
+                    profilePendingDelete = profile
+                },
+                onStopTracking: { profile in
+                    profilePendingStopTracking = profile
+                },
+                onResumeTracking: { profile in
+                    appState.resumeTrackingHermesProfile(profile)
+                }
+            )
+        }
+        .alert(
+            L10n.string("Delete Hermes profile?"),
+            isPresented: Binding(
+                get: { profilePendingDelete != nil },
+                set: { if !$0 { profilePendingDelete = nil } }
+            )
+        ) {
+            Button(L10n.string("Delete Profile"), role: .destructive) {
+                guard let profile = profilePendingDelete else { return }
+                profilePendingDelete = nil
+                Task {
+                    await appState.deleteRemoteHermesProfile(profile)
+                }
+            }
+
+            Button(L10n.string("Cancel"), role: .cancel) {
+                profilePendingDelete = nil
+            }
+        } message: {
+            Text(deleteProfileConfirmationMessage)
+        }
+        .alert(
+            L10n.string("Stop tracing this profile?"),
+            isPresented: Binding(
+                get: { profilePendingStopTracking != nil },
+                set: { if !$0 { profilePendingStopTracking = nil } }
+            )
+        ) {
+            Button(L10n.string("Stop Tracing"), role: .destructive) {
+                guard let profile = profilePendingStopTracking else { return }
+                profilePendingStopTracking = nil
+                Task {
+                    await appState.stopTrackingHermesProfile(profile)
+                }
+            }
+
+            Button(L10n.string("Cancel"), role: .cancel) {
+                profilePendingStopTracking = nil
+            }
+        } message: {
+            Text(L10n.string("Hermes Desktop will no longer track or display this profile. The profile will remain available on the host and can still be accessed via terminal."))
+        }
         .onAppear {
             presentPendingNewConnectionEditorIfNeeded()
+        }
+        .task(id: appState.activeConnectionID) {
+            guard appState.activeConnection != nil else { return }
+            guard appState.overview == nil else { return }
+            await appState.refreshOverview(manual: false)
         }
         .onChange(of: appState.pendingNewConnectionEditorRequestID) { _, _ in
             presentPendingNewConnectionEditorIfNeeded()
         }
     }
 
-    private var hostsPanel: some View {
-        HermesSurfacePanel(
-            title: "Saved Hosts",
-            subtitle: "Choose the active host for discovery, files, sessions and terminal access."
-        ) {
-            LazyVStack(alignment: .leading, spacing: 12) {
-                ForEach(appState.connectionStore.connections) { connection in
-                    ConnectionCard(
-                        connection: connection,
-                        isActive: appState.activeConnectionID == connection.id,
-                        onConnect: { appState.connect(to: connection) },
-                        onTest: { appState.testConnection(connection) },
-                        onEdit: {
-                            presentEditor(for: connection, isEditing: true)
-                        },
-                        onDelete: { appState.deleteConnection(connection) }
+    private var settingsColumn: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            workspaceProfileCard
+            preferencesCard
+        }
+    }
+
+    private var workspaceProfileCard: some View {
+        HermesSurfacePanel {
+            SettingsCardHeader(
+                systemImage: "person.crop.circle",
+                title: "Workspace & Profile",
+                subtitle: "Manage which Hermes profiles this Mac tracks on the active host.",
+                badge: nil
+            )
+
+            if let activeConnection = appState.activeConnection {
+                VStack(alignment: .leading, spacing: 14) {
+                    HermesInspectorFieldList(
+                        fields: workspaceFields(activeConnection),
+                        labelWidth: 118
                     )
+
+                    HStack(spacing: 10) {
+                        Button {
+                            isPresentingProfiles = true
+                        } label: {
+                            Label(L10n.string("Manage Profiles"), systemImage: "person.2")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(allDiscoveredProfiles.isEmpty)
+                    }
                 }
+            } else {
+                EmptySettingsState(
+                    systemImage: "person.crop.circle.badge.questionmark",
+                    title: "No active workspace",
+                    message: "Profile settings appear after a host is connected."
+                )
             }
         }
     }
 
-    private var connectionGuidePanel: some View {
-        HermesSurfacePanel(
-            title: "Connection Guide",
-            subtitle: "Keep the setup technical, but easy to scan and reason about."
-        ) {
-            VStack(alignment: .leading, spacing: 14) {
-                HermesInsetSurface {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(L10n.string("Recommended"))
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
+    private var preferencesCard: some View {
+        HermesSurfacePanel {
+            SettingsCardHeader(
+                systemImage: "slider.horizontal.3",
+                title: "Preferences",
+                subtitle: "Local settings saved on this Mac and applied at launch.",
+                badge: nil
+            )
 
-                        Text(L10n.string("Use an SSH alias whenever possible. It keeps the system SSH config as the source of truth and makes profiles easier to move between machines."))
-                            .font(.subheadline)
-                            .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 16) {
+                SettingsControlRow(title: "Theme", subtitle: "Choose the app appearance.") {
+                    Picker("", selection: appAppearanceBinding) {
+                        ForEach(AppAppearancePreference.allCases) { appearance in
+                            Text(L10n.string(appearance.title))
+                                .tag(appearance)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .frame(width: 250)
                 }
 
-                HermesInsetSurface {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(L10n.string("Authentication"))
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                Divider()
 
-                        Text(L10n.string("Profiles work best when SSH already works from this Mac without prompts. Password login may still exist on the host, but the app expects a non-interactive SSH path such as keys or ssh-agent."))
-                            .font(.subheadline)
-                            .fixedSize(horizontal: false, vertical: true)
+                TerminalAppearanceEditor(
+                    themePreference: terminalThemeBinding,
+                    fontSize: terminalFontSizeBinding,
+                    showsHeader: false,
+                    fixedWidth: nil,
+                    contentPadding: 0
+                )
 
-                        Text(L10n.string("The Mac and Hermes host do not need to share the same Wi-Fi. What matters is that normal ssh from this Mac can reach the host over LAN, public IP, VPN, or Tailscale."))
-                            .font(.subheadline)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
+                Divider()
 
-                VStack(alignment: .leading, spacing: 12) {
-                    GuideRow(label: "Alias", value: "hermes-home")
-                    GuideRow(label: "Hostname", value: "mac-studio.local")
-                    GuideRow(label: "LAN or public IP", value: "192.168.1.24 or 203.0.113.10")
-                    GuideRow(label: "Same Mac", value: "localhost or a local SSH alias")
-                }
+                Toggle(
+                    L10n.string("Check automatically for Hermes Desktop updates"),
+                    isOn: Binding(
+                        get: { appState.connectionStore.automaticallyChecksForUpdates },
+                        set: { appState.updateAutomaticUpdateChecks($0) }
+                    )
+                )
+                .toggleStyle(.checkbox)
             }
         }
+    }
+
+    private var inspectorPanel: some View {
+        HermesSurfacePanel {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(L10n.string("Host Connection"))
+                            .font(.title3.weight(.semibold))
+
+                        Text(L10n.string("Detailed information about your host connection."))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer()
+
+                    connectionStatusBadge
+                }
+
+                if let activeConnection = appState.activeConnection {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HermesInspectorFieldList(
+                            fields: inspectorFields(activeConnection),
+                            labelWidth: 112
+                        )
+
+                        hostManagementActions(activeConnection)
+                    }
+                } else {
+                    EmptySettingsState(
+                        systemImage: "network",
+                        title: "Waiting for host",
+                        message: "Add or select a host to see connection details."
+                    ) {
+                        Button {
+                            presentEditor(for: ConnectionProfile(), isEditing: false)
+                        } label: {
+                            Label(L10n.string("Add Host"), systemImage: "plus")
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                }
+
+                Picker("", selection: $inspectorTab) {
+                    ForEach(SettingsInspectorTab.allCases) { tab in
+                        Text(L10n.string(tab.title)).tag(tab)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                switch inspectorTab {
+                case .overview:
+                    inspectorOverview
+                case .diagnostics:
+                    diagnosticsOverview
+                }
+
+                helpFooter
+            }
+        }
+    }
+
+    private var inspectorOverview: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HealthSummaryRow(
+                isHealthy: appState.activeConnection != nil && appState.overviewError == nil,
+                title: connectionHealthTitle,
+                subtitle: connectionHealthSubtitle
+            )
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text(L10n.string("Next steps"))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                SettingsActionRow(
+                    systemImage: "terminal",
+                    title: "Open Terminal",
+                    subtitle: "Start a host-first SSH shell.",
+                    action: { appState.requestSectionSelection(.terminal) }
+                )
+
+                SettingsActionRow(
+                    systemImage: "doc.text",
+                    title: "Browse Files",
+                    subtitle: "Explore files and directories on your host.",
+                    action: { appState.requestSectionSelection(.files) }
+                )
+
+                SettingsActionRow(
+                    systemImage: "bubble.left.and.bubble.right",
+                    title: "View Sessions",
+                    subtitle: "See recent conversations and history.",
+                    action: { appState.requestSectionSelection(.sessions) }
+                )
+            }
+
+        }
+    }
+
+    private var diagnosticsOverview: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let activeConnection = appState.activeConnection {
+                Button {
+                    appState.testConnection(activeConnection)
+                } label: {
+                    Label(L10n.string("Test Connection"), systemImage: "waveform.path.ecg")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(appState.isBusy)
+
+                Button {
+                    Task {
+                        await appState.refreshOverview(manual: true)
+                    }
+                } label: {
+                    Label(L10n.string("Run Diagnostics"), systemImage: "stethoscope")
+                }
+                .buttonStyle(.bordered)
+                .disabled(appState.isBusy || appState.isRefreshingOverview)
+            }
+
+            if let overviewError = appState.overviewError {
+                HealthSummaryRow(
+                    isHealthy: false,
+                    title: "Discovery failed",
+                    subtitle: overviewError
+                )
+            } else if let overview = appState.overview {
+                ForEach(diagnosticRows(for: overview)) { row in
+                    HealthSummaryRow(isHealthy: row.isReady, title: row.title, subtitle: row.subtitle)
+                }
+            } else if appState.activeConnection == nil {
+                HealthSummaryRow(
+                    isHealthy: false,
+                    title: "No host selected",
+                    subtitle: "Add or select a host, then run diagnostics."
+                )
+            } else {
+                HealthSummaryRow(
+                    isHealthy: false,
+                    title: "Diagnostics not run yet",
+                    subtitle: "Press Run Diagnostics or Test Connection to check this host."
+                )
+            }
+        }
+    }
+
+    private var helpFooter: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Divider()
+
+            Button {
+                openURL(documentationURL)
+            } label: {
+                Label(L10n.string("Need help? Check documentation"), systemImage: "questionmark.circle")
+            }
+            .buttonStyle(.borderless)
+            .padding(.top, 2)
+        }
+    }
+
+    private func hostManagementActions(_ activeConnection: ConnectionProfile) -> some View {
+        HermesInsetSurface {
+            HStack(spacing: 8) {
+                Label(L10n.string("Host Actions"), systemImage: "slider.horizontal.3")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 8)
+
+                Button {
+                    presentEditor(for: activeConnection, isEditing: true)
+                } label: {
+                    Label(L10n.string("Edit"), systemImage: "pencil")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                hostSelectionMenu
+
+                Button {
+                    presentEditor(for: ConnectionProfile(), isEditing: false)
+                } label: {
+                    Label(L10n.string("Add Host"), systemImage: "plus")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var hostSelectionMenu: some View {
+        if appState.connectionStore.connections.count > 1 {
+            Menu {
+                ForEach(appState.connectionStore.connections) { connection in
+                    Button {
+                        appState.connect(to: connection)
+                    } label: {
+                        if appState.activeConnectionID == connection.id {
+                            Label(connection.label, systemImage: "checkmark")
+                        } else {
+                            Text(connection.label)
+                        }
+                    }
+                }
+            } label: {
+                Label(L10n.string("Switch Host"), systemImage: "chevron.up.chevron.down")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+    }
+
+    private var connectionStatusBadge: HermesBadge {
+        if appState.activeConnection == nil {
+            return HermesBadge(text: "Not configured", tint: .secondary)
+        }
+        if appState.isBusy || appState.isRefreshingOverview {
+            return HermesBadge(text: "Checking", tint: .orange)
+        }
+        if appState.overviewError != nil {
+            return HermesBadge(text: "Needs attention", tint: .orange)
+        }
+        if appState.overview != nil {
+            return HermesBadge(text: "Connected", tint: .green, systemImage: "circle.fill")
+        }
+        return HermesBadge(text: "Ready", tint: .secondary)
+    }
+
+    private var allDiscoveredProfiles: [RemoteHermesProfile] {
+        if let overview = appState.overview, !overview.availableProfiles.isEmpty {
+            return overview.availableProfiles
+        }
+        return appState.visibleHermesProfiles
+    }
+
+    private var appAppearanceBinding: Binding<AppAppearancePreference> {
+        Binding {
+            appState.connectionStore.appAppearance
+        } set: { newValue in
+            appState.connectionStore.appAppearance = newValue
+        }
+    }
+
+    private var terminalThemeBinding: Binding<TerminalThemePreference> {
+        Binding {
+            appState.connectionStore.terminalTheme
+        } set: { newValue in
+            appState.connectionStore.terminalTheme = newValue
+        }
+    }
+
+    private var terminalFontSizeBinding: Binding<Double> {
+        Binding {
+            appState.connectionStore.terminalFontSize
+        } set: { newValue in
+            appState.connectionStore.terminalFontSize = newValue
+        }
+    }
+
+    private var connectionHealthTitle: String {
+        if appState.activeConnection == nil { return "No host selected" }
+        if appState.overviewError != nil { return "Connection needs attention" }
+        return "Connection is healthy"
+    }
+
+    private var connectionHealthSubtitle: String {
+        if let overviewError = appState.overviewError {
+            return overviewError
+        }
+        if appState.activeConnection == nil {
+            return "Create or select a host to begin discovery."
+        }
+        return "Hermes Desktop is connected to your host and ready."
+    }
+
+    private var deleteProfileConfirmationMessage: String {
+        guard let profilePendingDelete else {
+            return L10n.string("This removes the profile directory from the host.")
+        }
+        return L10n.string("This permanently deletes %@ from the host. This cannot be undone.", profilePendingDelete.path)
+    }
+
+    private func workspaceFields(_ connection: ConnectionProfile) -> [HermesInspectorField] {
+        [
+            HermesInspectorField(label: "Workspace", value: connection.label, emphasizeValue: true),
+            HermesInspectorField(label: "Profile Path", value: appState.overview?.activeProfile.path ?? connection.remoteHermesHomePath, isMonospaced: true),
+            HermesInspectorField(label: "Tracked Profiles", value: "\(appState.visibleHermesProfiles.count)")
+        ]
+    }
+
+    private func inspectorFields(_ connection: ConnectionProfile) -> [HermesInspectorField] {
+        [
+            HermesInspectorField(label: "Host", value: connection.label, emphasizeValue: true),
+            HermesInspectorField(label: "Address", value: connection.effectiveTarget, isMonospaced: true),
+            HermesInspectorField(label: "Port", value: connection.resolvedPort.map { "\($0) (SSH)" } ?? "Default"),
+            HermesInspectorField(label: "Profile", value: connection.resolvedHermesProfileName, isMonospaced: true),
+            HermesInspectorField(label: "Last Checked", value: lastCheckedText)
+        ]
+    }
+
+    private var lastCheckedText: String {
+        guard let date = appState.lastOverviewRefreshedAt else { return "Not checked" }
+        return DateFormatters.relativeFormatter().localizedString(for: date, relativeTo: .now)
+    }
+
+    private func diagnosticRows(for overview: RemoteDiscovery) -> [SettingsDiagnosticRow] {
+        [
+            SettingsDiagnosticRow(title: "USER.md", subtitle: overview.paths.user, isReady: overview.exists.user),
+            SettingsDiagnosticRow(title: "MEMORY.md", subtitle: overview.paths.memory, isReady: overview.exists.memory),
+            SettingsDiagnosticRow(title: "SOUL.md", subtitle: overview.paths.soul, isReady: overview.exists.soul),
+            SettingsDiagnosticRow(title: "Sessions", subtitle: overview.paths.sessionsDir, isReady: overview.exists.sessionsDir),
+            SettingsDiagnosticRow(title: "Cron Jobs", subtitle: overview.paths.cronJobs, isReady: overview.exists.cronJobs),
+            SettingsDiagnosticRow(title: "Kanban", subtitle: overview.paths.kanbanDatabase ?? "~/.hermes/kanban.db", isReady: overview.exists.kanbanDatabase ?? false)
+        ]
     }
 
     private func presentEditor(for connection: ConnectionProfile, isEditing: Bool) {
@@ -157,141 +551,323 @@ struct ConnectionsView: View {
     }
 }
 
-private struct GuideRow: View {
-    let label: String
-    let value: String
+private enum SettingsInspectorTab: String, CaseIterable, Identifiable {
+    case overview
+    case diagnostics
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(L10n.string(label))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+    var id: String { rawValue }
 
-            Text(value)
-                .font(.system(.subheadline, design: .monospaced))
-                .textSelection(.enabled)
+    var title: String {
+        switch self {
+        case .overview:
+            return "Overview"
+        case .diagnostics:
+            return "Diagnostics"
         }
     }
 }
 
-private struct ConnectionCard: View {
-    let connection: ConnectionProfile
-    let isActive: Bool
-    let onConnect: () -> Void
-    let onTest: () -> Void
-    let onEdit: () -> Void
-    let onDelete: () -> Void
+private struct SettingsDiagnosticRow: Identifiable {
+    let id = UUID()
+    let title: String
+    let subtitle: String
+    let isReady: Bool
+}
+
+private struct SettingsCardHeader: View {
+    let systemImage: String
+    let title: String
+    let subtitle: String
+    let badge: HermesBadge?
 
     var body: some View {
-        HermesInsetSurface {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(connection.label)
-                            .font(.title3)
-                            .fontWeight(.semibold)
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 34, height: 34)
+                .background(Color.accentColor.opacity(0.14), in: Circle())
 
-                        Text(connection.displayDestination)
-                            .font(.system(.subheadline, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
+            VStack(alignment: .leading, spacing: 5) {
+                Text(L10n.string(title))
+                    .font(.headline)
 
-                    Spacer(minLength: 12)
+                Text(L10n.string(subtitle))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
-                    VStack(alignment: .trailing, spacing: 8) {
-                        if isActive {
-                            HermesBadge(text: "Active", tint: .accentColor)
-                        }
+            Spacer(minLength: 12)
 
-                        HermesBadge(
-                            text: connection.trimmedAlias != nil ? "Alias" : "Direct host",
-                            tint: .secondary
-                        )
-                    }
-                }
+            if let badge {
+                badge
+            }
+        }
+    }
+}
 
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: 16) {
-                        metadataRow(label: "Target", value: resolvedTarget)
-                        metadataRow(label: "SSH user", value: connection.trimmedUser ?? "Default")
-                        metadataRow(label: "Port", value: displayPort)
-                        metadataRow(label: hermesScopeLabel, value: hermesScopeValue)
-                    }
+private struct SettingsControlRow<Control: View>: View {
+    let title: String
+    let subtitle: String
+    let control: Control
 
-                    VStack(alignment: .leading, spacing: 12) {
-                        metadataRow(label: "Target", value: resolvedTarget)
-                        metadataRow(label: "SSH user", value: connection.trimmedUser ?? "Default")
-                        metadataRow(label: "Port", value: displayPort)
-                        metadataRow(label: hermesScopeLabel, value: hermesScopeValue)
-                    }
-                }
+    init(title: String, subtitle: String, @ViewBuilder control: () -> Control) {
+        self.title = title
+        self.subtitle = subtitle
+        self.control = control()
+    }
 
-                if let lastConnectedAt = connection.lastConnectedAt {
-                    Text(L10n.string("Last connected %@", DateFormatters.relativeFormatter().localizedString(for: lastConnectedAt, relativeTo: .now)))
+    var body: some View {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(L10n.string(title))
+                    .font(.subheadline.weight(.semibold))
+
+                Text(L10n.string(subtitle))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 12)
+
+            control
+        }
+    }
+}
+
+private struct EmptySettingsState<Actions: View>: View {
+    let systemImage: String
+    let title: String
+    let message: String
+    let actions: Actions
+
+    init(
+        systemImage: String,
+        title: String,
+        message: String,
+        @ViewBuilder actions: () -> Actions
+    ) {
+        self.systemImage = systemImage
+        self.title = title
+        self.message = message
+        self.actions = actions()
+    }
+
+    init(systemImage: String, title: String, message: String) where Actions == EmptyView {
+        self.systemImage = systemImage
+        self.title = title
+        self.message = message
+        self.actions = EmptyView()
+    }
+
+    var body: some View {
+        VStack(alignment: .center, spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.system(size: 30, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            VStack(spacing: 4) {
+                Text(L10n.string(title))
+                    .font(.headline)
+
+                Text(L10n.string(message))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            actions
+        }
+        .frame(maxWidth: .infinity, minHeight: 150)
+    }
+}
+
+private struct HealthSummaryRow: View {
+    let isHealthy: Bool
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 11) {
+            Image(systemName: isHealthy ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(isHealthy ? Color.green : Color.orange)
+                .font(.system(size: 17, weight: .semibold))
+                .frame(width: 22)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(L10n.string(title))
+                    .font(.subheadline.weight(.semibold))
+
+                Text(L10n.string(subtitle))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+}
+
+private struct SettingsActionRow: View {
+    let systemImage: String
+    let title: String
+    let subtitle: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 30, height: 30)
+                    .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(L10n.string(title))
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+
+                    Text(L10n.string(subtitle))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) {
-                        primaryActions
-                        Spacer(minLength: 12)
-                        destructiveAction
-                    }
+                Spacer()
 
-                    VStack(alignment: .leading, spacing: 10) {
-                        primaryActions
-                        destructiveAction
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct ManageProfilesSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let profiles: [RemoteHermesProfile]
+    let activeProfileName: String?
+    let hostConnectionFingerprint: String?
+    let isBusy: Bool
+    let isHidden: (RemoteHermesProfile) -> Bool
+    let onDelete: (RemoteHermesProfile) -> Void
+    let onStopTracking: (RemoteHermesProfile) -> Void
+    let onResumeTracking: (RemoteHermesProfile) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(L10n.string("Manage Profiles"))
+                        .font(.title3.weight(.semibold))
+
+                    Text(L10n.string("Control which Hermes profiles Desktop tracks locally, or delete a non-default profile from the host."))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer()
+
+                Button(L10n.string("Done")) {
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+
+            if profiles.isEmpty {
+                EmptySettingsState(
+                    systemImage: "person.2.slash",
+                    title: "No profiles discovered",
+                    message: "Refresh Settings after the host is reachable."
+                )
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(profiles) { profile in
+                            ManagedProfileRow(
+                                profile: profile,
+                                isActive: profile.name == activeProfileName,
+                                isHidden: isHidden(profile),
+                                isBusy: isBusy,
+                                canDelete: !profile.isDefault && profile.name != "default",
+                                onDelete: { onDelete(profile) },
+                                onStopTracking: { onStopTracking(profile) },
+                                onResumeTracking: { onResumeTracking(profile) }
+                            )
+                        }
                     }
                 }
             }
         }
+        .padding(22)
+        .frame(width: 560, height: 440)
     }
+}
 
-    private var primaryActions: some View {
-        HStack(spacing: 10) {
-            Button(L10n.string("Use Host"), action: onConnect)
-                .buttonStyle(.borderedProminent)
-                .disabled(isActive)
+private struct ManagedProfileRow: View {
+    let profile: RemoteHermesProfile
+    let isActive: Bool
+    let isHidden: Bool
+    let isBusy: Bool
+    let canDelete: Bool
+    let onDelete: () -> Void
+    let onStopTracking: () -> Void
+    let onResumeTracking: () -> Void
 
-            Button(L10n.string("Test"), action: onTest)
-                .buttonStyle(.bordered)
+    var body: some View {
+        HermesInsetSurface {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 7) {
+                            Text(profile.name)
+                                .font(.headline)
 
-            Button(L10n.string("Edit"), action: onEdit)
-                .buttonStyle(.bordered)
+                            if isActive {
+                                HermesBadge(text: "Active", tint: .accentColor)
+                            }
+                            if isHidden {
+                                HermesBadge(text: "Hidden", tint: .orange)
+                            }
+                            if profile.isDefault {
+                                HermesBadge(text: "Default", tint: .secondary)
+                            }
+                        }
+
+                        Text(profile.path)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
+
+                    Spacer()
+                }
+
+                HStack(spacing: 10) {
+                    Button(L10n.string("Delete Profile"), role: .destructive, action: onDelete)
+                        .buttonStyle(.bordered)
+                        .disabled(isBusy || !canDelete)
+
+                    if isHidden {
+                        Button(L10n.string("Track Profile"), action: onResumeTracking)
+                            .buttonStyle(.bordered)
+                            .disabled(isBusy)
+                    } else {
+                        Button(L10n.string("Stop Tracing"), role: .destructive, action: onStopTracking)
+                            .buttonStyle(.bordered)
+                            .disabled(isBusy)
+                    }
+                }
+            }
         }
-    }
-
-    private var destructiveAction: some View {
-        Button(L10n.string("Remove"), role: .destructive, action: onDelete)
-            .buttonStyle(.borderless)
-    }
-
-    private func metadataRow(label: String, value: String) -> some View {
-        HermesLabeledValue(
-            label: label,
-            value: value,
-            isMonospaced: label != "SSH user" || value != "Default"
-        )
-    }
-
-    private var resolvedTarget: String {
-        connection.trimmedAlias ?? connection.trimmedHost ?? "Not set"
-    }
-
-    private var hermesScopeLabel: String {
-        connection.usesCustomHermesHome ? "Custom Hermes home" : "Hermes profile"
-    }
-
-    private var hermesScopeValue: String {
-        connection.trimmedCustomHermesHomePath ?? connection.resolvedHermesProfileName
-    }
-
-    private var displayPort: String {
-        if let port = connection.resolvedPort {
-            return String(port)
-        }
-        return "Default"
     }
 }

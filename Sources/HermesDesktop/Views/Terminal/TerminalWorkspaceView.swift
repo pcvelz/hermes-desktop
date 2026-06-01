@@ -5,6 +5,7 @@ struct TerminalWorkspaceView: View {
     let context: TerminalWorkspaceContext
     let ensureTerminalSession: () -> Void
     let updateTerminalTheme: (TerminalThemePreference) -> Void
+    let updateTerminalFontSize: (Double) -> Void
     @State private var isShowingAppearanceEditor = false
     private let tabStripHeight: CGFloat = 44
 
@@ -47,7 +48,8 @@ struct TerminalWorkspaceView: View {
                 TerminalAppearanceToolbarButton(
                     appearance: terminalAppearance,
                     isPresented: $isShowingAppearanceEditor,
-                    themePreference: terminalThemeBinding
+                    themePreference: terminalThemeBinding,
+                    fontSize: terminalFontSizeBinding
                 )
             }
             .padding(.horizontal, 16)
@@ -59,6 +61,7 @@ struct TerminalWorkspaceView: View {
                 TerminalTabContainer(
                     session: selectedTab.session,
                     appearance: terminalAppearance,
+                    fontSize: context.terminalFontSize,
                     isActive: context.isTerminalSectionActive,
                     activeWorkspaceScopeFingerprint: context.activeWorkspaceScopeFingerprint
                 )
@@ -94,6 +97,14 @@ struct TerminalWorkspaceView: View {
             context.terminalTheme
         } set: { newValue in
             updateTerminalTheme(newValue)
+        }
+    }
+
+    private var terminalFontSizeBinding: Binding<Double> {
+        Binding {
+            context.terminalFontSize
+        } set: { newValue in
+            updateTerminalFontSize(newValue)
         }
     }
 
@@ -217,6 +228,7 @@ struct TerminalAppearanceToolbarButton: View {
     let appearance: TerminalThemeAppearance
     @Binding var isPresented: Bool
     @Binding var themePreference: TerminalThemePreference
+    @Binding var fontSize: Double
 
     var body: some View {
         Button {
@@ -245,14 +257,19 @@ struct TerminalAppearanceToolbarButton: View {
         .buttonStyle(.plain)
         .fixedSize()
         .popover(isPresented: $isPresented, arrowEdge: .top) {
-            TerminalAppearanceEditor(themePreference: $themePreference)
+            TerminalAppearanceEditor(themePreference: $themePreference, fontSize: $fontSize)
         }
-        .help(L10n.string("Customize terminal colors"))
+        .help(L10n.string("Customize terminal appearance"))
     }
 }
 
-private struct TerminalAppearanceEditor: View {
+struct TerminalAppearanceEditor: View {
     @Binding var themePreference: TerminalThemePreference
+    @Binding var fontSize: Double
+    var showsHeader = true
+    var fixedWidth: CGFloat? = 400
+    var contentPadding: CGFloat = 18
+
     @State private var customTarget = TerminalColorTarget.background
     @State private var draftBackgroundColor = TerminalThemeColor(hex: 0x12161D)
     @State private var draftForegroundColor = TerminalThemeColor(hex: 0xE7ECF3)
@@ -267,17 +284,43 @@ private struct TerminalAppearanceEditor: View {
         let appearance = themePreference.resolvedAppearance
 
         VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(L10n.string("Terminal Theme"))
-                    .font(.title3.weight(.semibold))
+            if showsHeader {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(L10n.string("Terminal Appearance"))
+                        .font(.title3.weight(.semibold))
 
-                Text(L10n.string("Pick a preset for a coherent terminal look, then fine-tune background and text colors live if you want."))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    Text(L10n.string("Tune terminal colors and font size. Changes apply to Terminal and live Chat sessions."))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             TerminalThemePreviewCard(appearance: appearance)
+
+            HermesInsetSurface {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text(L10n.string("Font Size"))
+                            .font(.headline)
+
+                        Spacer()
+
+                        Text(L10n.string("%.0f pt", fontSize))
+                            .font(.system(.caption, design: .monospaced).weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Slider(
+                        value: Binding(
+                            get: { fontSize },
+                            set: { fontSize = TerminalFontPreference.clamped($0) }
+                        ),
+                        in: TerminalFontPreference.minimumSize...TerminalFontPreference.maximumSize,
+                        step: 1
+                    )
+                }
+            }
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
@@ -357,8 +400,8 @@ private struct TerminalAppearanceEditor: View {
                 }
             }
         }
-        .padding(18)
-        .frame(width: 400)
+        .padding(contentPadding)
+        .frame(width: fixedWidth)
         .onAppear {
             resetCustomDraft(from: appearance)
         }

@@ -10,6 +10,7 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
     private var scheduledLaunchToken: UUID?
     private var initialInputTask: Task<Void, Never>?
     private var appliedAppearance: TerminalThemeAppearance?
+    private var appliedFontSize: Double?
     private var onProcessStart: (() -> Void)?
     private var onTitleChange: ((String) -> Void)?
     private var onDirectoryChange: ((String?) -> Void)?
@@ -36,10 +37,12 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
         in container: TerminalMountContainerView,
         request: TerminalLaunchRequest,
         appearance: TerminalThemeAppearance,
+        fontSize: Double,
         isActive: Bool
     ) {
         container.mount(hostView)
         applyAppearance(appearance)
+        applyFontSize(fontSize)
         setActive(isActive)
         scheduleStartIfNeeded(for: request)
     }
@@ -114,6 +117,13 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
         guard appliedAppearance != appearance else { return }
         appliedAppearance = appearance
         hostView.apply(appearance: appearance)
+    }
+
+    private func applyFontSize(_ fontSize: Double) {
+        let clampedFontSize = TerminalFontPreference.clamped(fontSize)
+        guard appliedFontSize != clampedFontSize else { return }
+        appliedFontSize = clampedFontSize
+        hostView.apply(fontSize: clampedFontSize)
     }
 
     private func setActive(_ isActive: Bool) {
@@ -320,6 +330,13 @@ final class TerminalHostView: NSView {
         terminalView.caretColor = foregroundColor
         terminalView.caretTextColor = backgroundColor
         terminalView.installColors(appearance.ansiPalette.map(Self.makeTerminalColor(from:)))
+    }
+
+    func apply(fontSize: Double) {
+        terminalView.font = NSFont.monospacedSystemFont(
+            ofSize: CGFloat(TerminalFontPreference.clamped(fontSize)),
+            weight: .regular
+        )
     }
 
     func send(_ text: String) {

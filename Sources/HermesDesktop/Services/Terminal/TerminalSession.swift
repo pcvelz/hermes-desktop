@@ -83,7 +83,7 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
         launchToken = UUID()
     }
 
-    func mount(in container: TerminalMountContainerView, appearance: TerminalThemeAppearance, isActive: Bool) {
+    func mount(in container: TerminalMountContainerView, appearance: TerminalThemeAppearance, fontSize: Double, isActive: Bool) {
         viewHost.mount(
             in: container,
             request: TerminalLaunchRequest(
@@ -94,6 +94,7 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
                 workflowLaunchDiagnosticsContext: workflowLaunchDiagnosticsContext
             ),
             appearance: appearance,
+            fontSize: fontSize,
             isActive: isActive
         )
     }

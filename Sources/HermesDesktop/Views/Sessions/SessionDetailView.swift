@@ -82,6 +82,7 @@ struct SessionDetailView: View {
     let terminal: SessionTUITerminal?
     let terminalTheme: TerminalThemePreference
     let terminalAppearance: TerminalThemeAppearance
+    let terminalFontSize: Double
     let isActive: Bool
     let savedScrollOffset: CGFloat?
     let onSaveScrollOffset: (String, CGFloat?) -> Void
@@ -91,6 +92,7 @@ struct SessionDetailView: View {
     let onModeChange: (SessionDetailMode) -> Void
     let onStartChat: () -> Void
     let onUpdateTerminalTheme: (TerminalThemePreference) -> Void
+    let onUpdateTerminalFontSize: (Double) -> Void
     let onTerminalExitRefresh: () async -> Void
 
     @State private var showDeleteConfirmation = false
@@ -184,6 +186,14 @@ struct SessionDetailView: View {
             terminalTheme
         } set: { newValue in
             onUpdateTerminalTheme(newValue)
+        }
+    }
+
+    private var terminalFontSizeBinding: Binding<Double> {
+        Binding {
+            terminalFontSize
+        } set: { newValue in
+            onUpdateTerminalFontSize(newValue)
         }
     }
 
@@ -320,7 +330,8 @@ struct SessionDetailView: View {
                     TerminalAppearanceToolbarButton(
                         appearance: terminalAppearance,
                         isPresented: $isShowingChatAppearanceEditor,
-                        themePreference: terminalThemeBinding
+                        themePreference: terminalThemeBinding,
+                        fontSize: terminalFontSizeBinding
                     )
 
                     if let exitCode = terminal.terminalSession.exitCode {
@@ -336,6 +347,7 @@ struct SessionDetailView: View {
                 SwiftTermTerminalView(
                     session: terminal.terminalSession,
                     appearance: terminalAppearance,
+                    fontSize: terminalFontSize,
                     isActive: isActive && mode == .chat
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

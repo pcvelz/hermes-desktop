@@ -124,7 +124,11 @@ struct RootView: View {
                 await appState.checkForUpdatesAtLaunch()
             }
             .onAppear {
+                appState.connectionStore.appAppearance.applyToApplication()
                 ensureWorkspaceSidebarVisibleForCurrentSection()
+            }
+            .onChange(of: appState.connectionStore.appAppearance) { _, newValue in
+                newValue.applyToApplication()
             }
             .onChange(of: appState.selectedSection) { _, _ in
                 ensureWorkspaceSidebarVisibleForCurrentSection()
@@ -241,7 +245,7 @@ struct RootView: View {
         if appState.activeConnection == nil {
             return [.connections]
         }
-        return [.connections, .overview, .sessions, .workflows, .cronjobs, .kanban, .files, .usage, .skills, .terminal]
+        return [.connections, .sessions, .workflows, .cronjobs, .kanban, .files, .usage, .skills, .terminal]
     }
 
     private var sectionSelection: Binding<AppSection?> {
@@ -308,13 +312,17 @@ struct RootView: View {
                     activeConnection: appState.activeConnection,
                     activeWorkspaceScopeFingerprint: appState.activeConnection?.workspaceScopeFingerprint,
                     isTerminalSectionActive: appState.selectedSection == .terminal,
-                    terminalTheme: appState.connectionStore.terminalTheme
+                    terminalTheme: appState.connectionStore.terminalTheme,
+                    terminalFontSize: appState.connectionStore.terminalFontSize
                 ),
                 ensureTerminalSession: {
                     appState.ensureTerminalSession()
                 },
                 updateTerminalTheme: { newValue in
                     appState.connectionStore.terminalTheme = newValue
+                },
+                updateTerminalFontSize: { newValue in
+                    appState.connectionStore.terminalFontSize = newValue
                 }
             )
         }
@@ -491,8 +499,8 @@ private struct WorkspaceSidebarCard: View {
     }
 
     private var availableProfiles: [RemoteHermesProfile] {
-        if let overview = appState.overview, !overview.availableProfiles.isEmpty {
-            return overview.availableProfiles
+        if !appState.visibleHermesProfiles.isEmpty {
+            return appState.visibleHermesProfiles
         }
 
         return [

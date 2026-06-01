@@ -65,7 +65,7 @@ struct HermesDesktopCommands: Commands {
         }
 
         CommandMenu(L10n.string("Navigate")) {
-            ForEach(AppSection.allCases) { section in
+            ForEach(AppSection.navigationCases) { section in
                 Button(L10n.string("Show %@", section.title)) {
                     appState.requestSectionSelection(section)
                 }

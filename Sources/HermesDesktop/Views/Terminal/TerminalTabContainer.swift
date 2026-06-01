@@ -3,6 +3,7 @@ import SwiftUI
 struct TerminalTabContainer: View {
     @ObservedObject var session: TerminalSession
     let appearance: TerminalThemeAppearance
+    let fontSize: Double
     let isActive: Bool
     let activeWorkspaceScopeFingerprint: String?
 
@@ -48,7 +49,7 @@ struct TerminalTabContainer: View {
             .padding(.vertical, 10)
             .background(Color.secondary.opacity(0.08))
 
-            SwiftTermTerminalView(session: session, appearance: appearance, isActive: isActive)
+            SwiftTermTerminalView(session: session, appearance: appearance, fontSize: fontSize, isActive: isActive)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(appearance.backgroundColor.swiftUIColor)
                 .clipped()

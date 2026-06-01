@@ -24,6 +24,19 @@ final class RemoteHermesService: @unchecked Sendable {
         )
     }
 
+    func deleteHermesProfile(connection: ConnectionProfile, profileName: String) async throws -> RemoteProfileDeletionResult {
+        let script = try RemotePythonScript.wrap(
+            RemoteProfileDeletionRequest(profileName: profileName),
+            body: profileDeletionScript
+        )
+
+        return try await sshTransport.executeJSON(
+            on: connection,
+            pythonScript: script,
+            responseType: RemoteProfileDeletionResult.self
+        )
+    }
+
     private var discoveryScript: String {
         """
         import json
@@ -178,6 +191,43 @@ final class RemoteHermesService: @unchecked Sendable {
             fail(f"Unable to discover the remote Hermes workspace: {exc}")
         """
     }
+
+    private var profileDeletionScript: String {
+        """
+        import json
+        import pathlib
+        import shutil
+
+        try:
+            profile_name = str(payload.get("profile_name") or "").strip()
+            if not profile_name:
+                fail("Profile name is required.")
+            if profile_name == "default":
+                fail("The default Hermes profile cannot be deleted from Hermes Desktop.")
+            if "/" in profile_name or profile_name in {".", ".."}:
+                fail("Profile name must be a profile name, not a path.")
+
+            home = pathlib.Path.home()
+            profile_path = home / ".hermes" / "profiles" / profile_name
+            profiles_root = (home / ".hermes" / "profiles").resolve()
+            resolved_profile_path = profile_path.resolve()
+            if profiles_root not in resolved_profile_path.parents:
+                fail("Resolved profile path is outside ~/.hermes/profiles.")
+            if not profile_path.exists():
+                fail(f"Profile '{profile_name}' does not exist on this host.")
+            if not profile_path.is_dir():
+                fail(f"Profile '{profile_name}' is not a directory.")
+
+            shutil.rmtree(profile_path)
+            print(json.dumps({
+                "ok": True,
+                "profile_name": profile_name,
+                "deleted_path": tilde(profile_path, home),
+            }, ensure_ascii=False))
+        except Exception as exc:
+            fail(f"Unable to delete Hermes profile: {exc}")
+        """
+    }
 }
 
 private struct RemoteDiscoveryRequest: Encodable {
@@ -189,5 +239,25 @@ private struct RemoteDiscoveryRequest: Encodable {
         case hermesHome = "hermes_home"
         case profileName = "profile_name"
         case customHomeMode = "custom_home_mode"
+    }
+}
+
+private struct RemoteProfileDeletionRequest: Encodable {
+    let profileName: String
+
+    enum CodingKeys: String, CodingKey {
+        case profileName = "profile_name"
+    }
+}
+
+struct RemoteProfileDeletionResult: Decodable {
+    let ok: Bool
+    let profileName: String
+    let deletedPath: String
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case profileName = "profile_name"
+        case deletedPath = "deleted_path"
     }
 }

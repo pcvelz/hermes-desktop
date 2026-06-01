@@ -15,6 +15,10 @@ enum AppSection: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    static var navigationCases: [AppSection] {
+        [.connections, .sessions, .workflows, .cronjobs, .kanban, .files, .usage, .skills, .terminal]
+    }
+
     var title: String {
         L10n.string(rawTitle)
     }
@@ -22,7 +26,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     private var rawTitle: String {
         switch self {
         case .connections:
-            "Connections"
+            "Settings"
         case .overview:
             "Overview"
         case .files:
@@ -47,7 +51,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .connections:
-            "network"
+            "gearshape"
         case .overview:
             "waveform.path.ecg"
         case .files:

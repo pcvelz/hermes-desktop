@@ -16,6 +16,7 @@ final class AppState: ObservableObject {
     @Published var statusMessage: String?
     @Published var overview: RemoteDiscovery?
     @Published var overviewError: String?
+    @Published var lastOverviewRefreshedAt: Date?
     @Published var isRefreshingOverview = false
     @Published var activeConnectionID: UUID?
     @Published var selectedSessionID: String?
@@ -179,9 +180,7 @@ final class AppState: ObservableObject {
 
         self.activeConnectionID = connectionStore.lastConnectionID
 
-        if activeConnectionID != nil {
-            selectedSection = .overview
-        }
+        selectedSection = .connections
     }
 
     var activeConnection: ConnectionProfile? {
@@ -261,7 +260,7 @@ final class AppState: ObservableObject {
         guard activeConnection != nil else { return false }
 
         switch selectedSection {
-        case .overview:
+        case .connections, .overview:
             return !isRefreshingOverview && !isBusy
         case .sessions:
             return !isLoadingSessions && !isRefreshingSessions
@@ -275,7 +274,7 @@ final class AppState: ObservableObject {
             return !isLoadingUsage && !isRefreshingUsage
         case .skills:
             return !isLoadingSkills && !isRefreshingSkills
-        case .connections, .files, .terminal:
+        case .files, .terminal:
             return false
         }
     }
@@ -294,6 +293,31 @@ final class AppState: ObservableObject {
             return true
         case .connections, .overview, .files, .usage, .terminal:
             return false
+        }
+    }
+
+    var visibleHermesProfiles: [RemoteHermesProfile] {
+        guard let activeConnection else { return [] }
+
+        let discoveredProfiles: [RemoteHermesProfile]
+        if let overview, !overview.availableProfiles.isEmpty {
+            discoveredProfiles = overview.availableProfiles
+        } else {
+            discoveredProfiles = [
+                RemoteHermesProfile(
+                    name: activeConnection.resolvedHermesProfileName,
+                    path: activeConnection.remoteHermesHomePath,
+                    isDefault: activeConnection.usesDefaultHermesProfile,
+                    exists: true
+                )
+            ]
+        }
+
+        return discoveredProfiles.filter { profile in
+            !connectionStore.isHermesProfileHidden(
+                name: profile.name,
+                hostConnectionFingerprint: activeConnection.hostConnectionFingerprint
+            )
         }
     }
 
@@ -363,7 +387,7 @@ final class AppState: ObservableObject {
         guard canRefreshCurrentSection else { return }
 
         switch selectedSection {
-        case .overview:
+        case .connections, .overview:
             await refreshOverview(manual: true)
         case .sessions:
             await refreshSessions(query: sessionSearchQuery)
@@ -377,7 +401,7 @@ final class AppState: ObservableObject {
             await refreshUsage()
         case .skills:
             await refreshSkills()
-        case .connections, .files, .terminal:
+        case .files, .terminal:
             break
         }
     }
@@ -455,7 +479,7 @@ final class AppState: ObservableObject {
         var updatedProfile = profile
         updatedProfile.lastConnectedAt = Date()
         connectionStore.upsert(updatedProfile)
-        selectedSection = .overview
+        selectedSection = .connections
         setStatusMessage(L10n.string("Connecting to %@…", profile.label))
 
         Task {
@@ -483,7 +507,7 @@ final class AppState: ObservableObject {
         guard isChangingWorkspaceScope else { return }
 
         resetWorkspaceStateForConnectionChange()
-        selectedSection = .overview
+        selectedSection = .connections
         setStatusMessage(L10n.string("Refreshing %@…", normalized.label))
 
         Task {
@@ -515,6 +539,77 @@ final class AppState: ObservableObject {
             section: selectedSection,
             statusMessage: L10n.string("Switching to %@…", profileName)
         )
+    }
+
+    func stopTrackingHermesProfile(_ profile: RemoteHermesProfile) async {
+        guard let activeConnection else { return }
+        let hostFingerprint = activeConnection.hostConnectionFingerprint
+        guard !connectionStore.isHermesProfileHidden(name: profile.name, hostConnectionFingerprint: hostFingerprint) else { return }
+
+        if activeConnection.resolvedHermesProfileName == profile.name {
+            guard let replacement = visibleHermesProfiles.first(where: { $0.name != profile.name }) else {
+                activeAlert = AppAlert(
+                    title: L10n.string("Cannot stop tracking this profile"),
+                    message: L10n.string("Hermes Desktop needs at least one visible profile for the active host.")
+                )
+                return
+            }
+            await switchHermesProfile(to: replacement.name)
+        }
+
+        connectionStore.hideHermesProfile(name: profile.name, hostConnectionFingerprint: hostFingerprint)
+        setStatusMessage(L10n.string("Stopped tracking %@", profile.name))
+    }
+
+    func resumeTrackingHermesProfile(_ profile: RemoteHermesProfile) {
+        guard let activeConnection else { return }
+        connectionStore.showHermesProfile(
+            name: profile.name,
+            hostConnectionFingerprint: activeConnection.hostConnectionFingerprint
+        )
+        setStatusMessage(L10n.string("Tracking %@ again", profile.name))
+    }
+
+    func deleteRemoteHermesProfile(_ profile: RemoteHermesProfile) async {
+        guard let activeConnection else { return }
+        guard !profile.isDefault && profile.name != "default" else {
+            activeAlert = AppAlert(
+                title: L10n.string("Default profile cannot be deleted"),
+                message: L10n.string("Hermes Desktop will not delete ~/.hermes from the host. Use Stop Tracing if you only want to hide the profile locally.")
+            )
+            return
+        }
+
+        if activeConnection.resolvedHermesProfileName == profile.name {
+            guard let replacement = visibleHermesProfiles.first(where: { $0.name != profile.name }) else {
+                activeAlert = AppAlert(
+                    title: L10n.string("Cannot delete active profile"),
+                    message: L10n.string("Switch to another profile before deleting this one.")
+                )
+                return
+            }
+            await switchHermesProfile(to: replacement.name)
+        }
+
+        do {
+            isBusy = true
+            setStatusMessage(L10n.string("Deleting %@…", profile.name))
+            let result = try await remoteHermesService.deleteHermesProfile(connection: activeConnection, profileName: profile.name)
+            connectionStore.showHermesProfile(
+                name: profile.name,
+                hostConnectionFingerprint: activeConnection.hostConnectionFingerprint
+            )
+            await refreshOverview(manual: false)
+            isBusy = false
+            setStatusMessage(L10n.string("Deleted %@", result.profileName))
+        } catch {
+            isBusy = false
+            activeAlert = AppAlert(
+                title: L10n.string("Unable to delete profile"),
+                message: error.localizedDescription
+            )
+            setStatusMessage(L10n.string("Unable to delete profile"))
+        }
     }
 
     func testConnection(_ profile: ConnectionProfile) {
@@ -583,6 +678,7 @@ final class AppState: ObservableObject {
             let discovery = try await remoteHermesService.discover(connection: profile)
             guard isActiveWorkspace(profile) else { return }
             overview = discovery
+            lastOverviewRefreshedAt = Date()
             _ = await refreshNativeChatBootstrapStatus(for: profile, force: manual)
             isBusy = false
             if manual {
@@ -2739,7 +2835,7 @@ final class AppState: ObservableObject {
 
     private func handleSectionEntry(_ section: AppSection) {
         switch section {
-        case .overview:
+        case .connections, .overview:
             Task { await refreshOverview() }
         case .files:
             Task { await ensureInitialFileLoads() }
@@ -2761,8 +2857,6 @@ final class AppState: ObservableObject {
             Task { await loadSkills(reset: true) }
         case .terminal:
             ensureTerminalSession()
-        case .connections:
-            break
         }
     }
 
