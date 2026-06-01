@@ -136,7 +136,36 @@ struct SessionDetailView: View {
 
     @ViewBuilder
     private var detailToolbar: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 14) {
+                detailToolbarSummary
+
+                Picker("", selection: modeBinding) {
+                    Text(L10n.string("Transcript")).tag(SessionDetailMode.transcript)
+                    Text(L10n.string("Chat")).tag(SessionDetailMode.chat)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 196)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                detailToolbarSummary
+
+                Picker("", selection: modeBinding) {
+                    Text(L10n.string("Transcript")).tag(SessionDetailMode.transcript)
+                    Text(L10n.string("Chat")).tag(SessionDetailMode.chat)
+                }
+                .pickerStyle(.segmented)
+                .fixedSize(horizontal: true, vertical: false)
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 9)
+        .background(.bar)
+    }
+
+    @ViewBuilder
+    private var detailToolbarSummary: some View {
         if let session {
             SessionSummaryPanel(
                 session: session,
@@ -147,30 +176,17 @@ struct SessionDetailView: View {
                 onDelete: { showDeleteConfirmation = true }
             )
         } else {
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(L10n.string("New Chat"))
-                        .font(.title3.weight(.semibold))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(L10n.string("New Chat"))
+                    .font(.headline.weight(.semibold))
 
-                    Text(newChatSubtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
+                Text(newChatSubtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-
-            Picker("", selection: modeBinding) {
-                Text(L10n.string("Transcript")).tag(SessionDetailMode.transcript)
-                Text(L10n.string("Chat")).tag(SessionDetailMode.chat)
-            }
-            .pickerStyle(.segmented)
-            .fixedSize(horizontal: true, vertical: false)
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
-        .background(.bar)
     }
 
     private var modeBinding: Binding<SessionDetailMode> {
@@ -773,99 +789,130 @@ private struct SessionSummaryPanel: View {
     let onDelete: () -> Void
 
     var body: some View {
-        HermesSurfacePanel {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(session.resolvedTitle)
-                            .font(.title3)
-                            .fontWeight(.semibold)
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(session.resolvedTitle)
+                        .font(.headline.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.86)
 
-                        Text(session.id)
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                            .contextMenu {
-                                Button(L10n.string("Copy Session ID")) {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(session.id, forType: .string)
-                                }
-                            }
+                    if let model = session.displayModel {
+                        HermesBadge(text: model, tint: .orange)
                     }
 
-                    Spacer(minLength: 12)
-
-                    HStack(spacing: 8) {
-                        if let model = session.displayModel {
-                            HermesBadge(text: model, tint: .orange)
-                        }
-
-                        if let count = session.messageCount {
-                            HermesBadge(text: L10n.string("%@ messages", "\(count)"), tint: .accentColor)
-                        }
-
-                        Menu {
-                            Button {
-                                onOpenInTerminal()
-                            } label: {
-                                Label(L10n.string("Open in terminal"), systemImage: "terminal")
-                            }
-
-                            Button {
-                                onTogglePin()
-                            } label: {
-                                Label(
-                                    L10n.string(isPinned ? "Unpin session" : "Pin session"),
-                                    systemImage: isPinned ? "pin.slash" : "pin"
-                                )
-                            }
-
-                            Button(L10n.string("Delete session"), role: .destructive, action: onDelete)
-                        } label: {
-                            if isDeleting {
-                                ProgressView()
-                                    .controlSize(.small)
-                            } else {
-                                Label(L10n.string("More"), systemImage: "ellipsis.circle")
-                                    .labelStyle(.iconOnly)
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .help(L10n.string("More session actions"))
-                        .accessibilityLabel(L10n.string("More session actions"))
-                        .disabled(isDeleting)
+                    if let count = session.messageCount {
+                        HermesBadge(text: L10n.string("%@ messages", "\(count)"), tint: .accentColor)
                     }
                 }
 
-                if !sessionMetadataFields.isEmpty {
-                    HermesInspectorFieldList(fields: sessionMetadataFields)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) {
+                        sessionIDLabel
+                        metadataLine
+                    }
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        sessionIDLabel
+                        metadataLine
+                    }
                 }
             }
+
+            Spacer(minLength: 8)
+
+            actionsMenu
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var sessionIDLabel: some View {
+        Text(session.id)
+            .font(.system(.caption2, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .textSelection(.enabled)
+            .contextMenu {
+                Button(L10n.string("Copy Session ID")) {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(session.id, forType: .string)
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var metadataLine: some View {
+        if !sessionMetadataItems.isEmpty {
+            HStack(spacing: 8) {
+                ForEach(sessionMetadataItems, id: \.0) { item in
+                    HStack(spacing: 4) {
+                        Text(L10n.string(item.0))
+                            .fontWeight(.semibold)
+
+                        Text(item.1)
+                    }
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
         }
     }
 
-    private var sessionMetadataFields: [HermesInspectorField] {
-        var fields: [HermesInspectorField] = []
+    private var actionsMenu: some View {
+        Menu {
+            Button {
+                onOpenInTerminal()
+            } label: {
+                Label(L10n.string("Open in terminal"), systemImage: "terminal")
+            }
+
+            Button {
+                onTogglePin()
+            } label: {
+                Label(
+                    L10n.string(isPinned ? "Unpin session" : "Pin session"),
+                    systemImage: isPinned ? "pin.slash" : "pin"
+                )
+            }
+
+            Button(L10n.string("Delete session"), role: .destructive, action: onDelete)
+        } label: {
+            if isDeleting {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Label(L10n.string("More"), systemImage: "ellipsis.circle")
+                    .labelStyle(.iconOnly)
+            }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .fixedSize(horizontal: true, vertical: false)
+        .help(L10n.string("More session actions"))
+        .accessibilityLabel(L10n.string("More session actions"))
+        .disabled(isDeleting)
+    }
+
+    private var sessionMetadataItems: [(String, String)] {
+        var items: [(String, String)] = []
 
         if let startedAt = session.startedAt?.dateValue {
-            fields.append(HermesInspectorField(
-                id: "started",
-                label: "Started",
-                value: DateFormatters.shortDateTimeFormatter().string(from: startedAt)
+            items.append((
+                "Started",
+                DateFormatters.shortDateTimeFormatter().string(from: startedAt)
             ))
         }
 
         if let lastActive = session.lastActive?.dateValue {
-            fields.append(HermesInspectorField(
-                id: "last-active",
-                label: "Last active",
-                value: DateFormatters.shortDateTimeFormatter().string(from: lastActive)
+            items.append((
+                "Active",
+                DateFormatters.shortDateTimeFormatter().string(from: lastActive)
             ))
         }
 
-        return fields
+        return items
     }
 }
 
