@@ -27,7 +27,7 @@ which path the app is using, and where the work is happening.
       <img src="assets/sessions.png" alt="Hermes Desktop Sessions view" />
     </td>
     <td width="50%">
-      <img src="assets/workflows.png" alt="Hermes Desktop Workflows view" />
+      <img src="assets/terminal.png" alt="Hermes Desktop Terminal view" />
     </td>
   </tr>
   <tr>
@@ -40,16 +40,24 @@ which path the app is using, and where the work is happening.
   </tr>
   <tr>
     <td width="50%">
-      <img src="assets/USAGE.png" alt="Hermes Desktop Usage view" />
+      <img src="assets/skills.png" alt="Hermes Desktop Skills view" />
     </td>
     <td width="50%">
-      <img src="assets/terminal.png" alt="Hermes Desktop Terminal view" />
+      <img src="assets/cron.png" alt="Hermes Desktop Cron Jobs view" />
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="assets/usage.png" alt="Hermes Desktop Usage view" />
+    </td>
+    <td width="50%">
+      <img src="assets/settings.png" alt="Hermes Desktop Settings view" />
     </td>
   </tr>
 </table>
 
-Six previewed views from the app: sessions, workflows, Kanban, workspace
-files, usage, and terminal.
+Eight previewed views from the app: sessions, terminal, Kanban, files,
+skills, cron jobs, usage, and settings.
 
 ## What Hermes Desktop gives you
 
@@ -207,9 +215,9 @@ Hermes Desktop can target multiple profiles on the same SSH host.
 - set `Hermes profile` to `researcher` to use
   `~/.hermes/profiles/researcher`
 
-The profile is not just a label. It flows through the app: Overview, Sessions,
-Workflows, Usage, Cron Jobs, Files, Skills, chat, and Terminal all stay
-aligned with the selected host and profile.
+The profile is not just a label. It flows through the app: Sessions, Workflows,
+Cron Jobs, Kanban, Files, Usage, Skills, and Terminal all stay aligned with
+the selected host and profile.
 
 ### Connect to the same Mac
 
@@ -234,13 +242,10 @@ workspace, a remote IDE, or a generic SFTP client.
 
 It gives the real Hermes workflow a native workbench:
 
-- `Overview`
-  Confirms the active host, active Hermes profile, discovered profiles,
-  important paths, cron location, and session store source.
 - `Sessions`
   Searches and reads the remote session store, including transcript content.
-  You can pin important sessions, continue a chat, resume in Terminal, and keep
-  the session history close while you work.
+  You can pin important sessions, resume a session in the embedded TUI chat
+  or in Terminal, and keep the session history close while you work.
 - `Workflows`
   Saves reusable prompt presets on your Mac, scoped to the active host/profile,
   with optional skill selections. Running one opens a fresh Terminal tab and
@@ -271,7 +276,9 @@ Hermes Desktop does not replace the terminal surfaces Hermes already gives you.
 It lets you choose the right one for the job.
 
 - Use `Chat` in `Sessions` when you want the real Hermes TUI embedded in the
-  app, already scoped to the selected SSH host and Hermes profile.
+  app, already scoped to the selected SSH host and Hermes profile. The Chat
+  view is a hosted `hermes --tui` session — there is no separate Desktop
+  conversation layer in front of it.
 - Use `Transcript` in `Sessions` when you want to inspect persisted history from
   the host without starting or resuming a live TUI.
 - Use the embedded `Terminal` for heavier work where you want shell control,
@@ -402,13 +409,14 @@ interactive setup for that target, the app will usually hit the same wall.
 
 ### What does Sessions Chat do?
 
-It runs the real Hermes TUI on the selected host over SSH.
+It runs the real Hermes TUI on the selected host over SSH, hosted inside the
+`Sessions` view of the app.
 
-Starting a new chat launches `hermes --tui`. Continuing a session launches
-`hermes --tui --resume <session-id>`, with the selected Hermes profile preserved
-when one is active.
+Starting a new chat launches `hermes --tui` in an embedded TUI terminal.
+Resuming a session launches `hermes --tui --resume <session-id>`, with the
+selected Hermes profile preserved when one is active.
 
-The important detail is that Chat is a surface over the host's Hermes TUI, not a
+The important detail is that Chat is a hosted `hermes --tui` surface, not a
 separate Desktop conversation backend. Sessions still reads persisted
 transcripts back from the host, and the host remains the source of truth.
 
