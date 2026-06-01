@@ -15,6 +15,10 @@ struct KanbanView: View {
     @State private var boardDraft = KanbanBoardDraft()
     @State private var boardPendingArchive: KanbanProject?
     @State private var showArchiveBoardConfirmation = false
+    @State private var cachedFilteredTasks: [KanbanTask] = []
+    @State private var cachedAssigneeOptions: [String] = []
+    @State private var cachedTenantOptions: [String] = []
+    @State private var cachedDisplayStatuses: [KanbanTaskStatus] = KanbanTaskStatus.boardStatuses
 
     var body: some View {
         HermesCollapsibleHSplitView(layout: $splitLayout, detailMinWidth: 420) {
@@ -30,13 +34,28 @@ struct KanbanView: View {
                 await appState.loadKanbanBoard()
             }
         }
+        .onAppear { recomputeKanbanCaches() }
+        .onChange(of: appState.kanbanBoard) { _, _ in
+            recomputeKanbanCaches()
+        }
         .onChange(of: appState.includeArchivedKanbanTasks) { _, includeArchived in
+            recomputeKanbanCaches()
             Task { await appState.refreshKanbanBoard(includeArchived: includeArchived) }
         }
         .onChange(of: statusFilter) { _, filter in
+            recomputeKanbanCaches()
             if filter == .archived, !appState.includeArchivedKanbanTasks {
                 appState.includeArchivedKanbanTasks = true
             }
+        }
+        .onChange(of: assigneeFilter) { _, _ in
+            recomputeKanbanCaches()
+        }
+        .onChange(of: tenantFilter) { _, _ in
+            recomputeKanbanCaches()
+        }
+        .onChange(of: searchText) { _, _ in
+            recomputeKanbanCaches()
         }
         .alert(L10n.string("Archive this Kanban board?"), isPresented: $showArchiveBoardConfirmation, presenting: boardPendingArchive) { board in
             Button(L10n.string("Archive"), role: .destructive) {
@@ -410,7 +429,7 @@ struct KanbanView: View {
     }
 
     private func kanbanGroupedList(_ board: KanbanBoard) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        LazyVStack(alignment: .leading, spacing: 14) {
             ForEach(displayStatuses, id: \.rawValue) { status in
                 let tasks = filteredTasks(for: status)
                 if !tasks.isEmpty {
@@ -554,51 +573,94 @@ struct KanbanView: View {
     }
 
     private var filteredTasks: [KanbanTask] {
-        guard let board = appState.kanbanBoard else { return [] }
+        cachedFilteredTasks
+    }
+
+    private func filteredTasks(for status: KanbanTaskStatus) -> [KanbanTask] {
+        cachedFilteredTasks.filter { $0.status == status }
+    }
+
+    private var displayStatuses: [KanbanTaskStatus] {
+        cachedDisplayStatuses
+    }
+
+    private var assigneeOptions: [String] {
+        cachedAssigneeOptions
+    }
+
+    private var tenantOptions: [String] {
+        cachedTenantOptions
+    }
+
+    private func recomputeKanbanCaches() {
+        cachedFilteredTasks = Self.computeFilteredTasks(
+            board: appState.kanbanBoard,
+            includeArchived: appState.includeArchivedKanbanTasks,
+            status: statusFilter.status,
+            assignee: assigneeFilter,
+            tenant: tenantFilter,
+            searchText: searchText
+        )
+        cachedAssigneeOptions = Self.computeAssigneeOptions(board: appState.kanbanBoard)
+        cachedTenantOptions = Self.computeTenantOptions(board: appState.kanbanBoard)
+        cachedDisplayStatuses = Self.computeDisplayStatuses(
+            status: statusFilter.status,
+            includeArchived: appState.includeArchivedKanbanTasks
+        )
+    }
+
+    private static func computeFilteredTasks(
+        board: KanbanBoard?,
+        includeArchived: Bool,
+        status: KanbanTaskStatus?,
+        assignee: KanbanFilterOption,
+        tenant: KanbanFilterOption,
+        searchText: String
+    ) -> [KanbanTask] {
+        guard let board else { return [] }
         return board.tasks.filter { task in
-            if !appState.includeArchivedKanbanTasks && task.status == .archived {
+            if !includeArchived && task.status == .archived {
                 return false
             }
-            if let status = statusFilter.status, task.status != status {
+            if let status, task.status != status {
                 return false
             }
-            if case .value(let assignee) = assigneeFilter, task.assignee != assignee {
+            if case .value(let value) = assignee, task.assignee != value {
                 return false
             }
-            if case .value(let tenant) = tenantFilter, task.tenant != tenant {
+            if case .value(let value) = tenant, task.tenant != value {
                 return false
             }
             return task.matchesSearch(searchText)
         }
     }
 
-    private func filteredTasks(for status: KanbanTaskStatus) -> [KanbanTask] {
-        filteredTasks.filter { $0.status == status }
-    }
-
-    private var displayStatuses: [KanbanTaskStatus] {
-        if let status = statusFilter.status {
-            return [status]
-        }
-
-        return KanbanTaskStatus.boardStatuses.filter { status in
-            status != .archived || appState.includeArchivedKanbanTasks
-        }
-    }
-
-    private var assigneeOptions: [String] {
-        let boardAssignees = appState.kanbanBoard?.assignees.map(\.name) ?? []
-        let taskAssignees = appState.kanbanBoard?.tasks.compactMap(\.assignee) ?? []
+    private static func computeAssigneeOptions(board: KanbanBoard?) -> [String] {
+        let boardAssignees = board?.assignees.map(\.name) ?? []
+        let taskAssignees = board?.tasks.compactMap(\.assignee) ?? []
         return Array(Set(boardAssignees + taskAssignees)).sorted {
             $0.localizedStandardCompare($1) == .orderedAscending
         }
     }
 
-    private var tenantOptions: [String] {
-        let boardTenants = appState.kanbanBoard?.tenants ?? []
-        let taskTenants = appState.kanbanBoard?.tasks.compactMap(\.tenant) ?? []
+    private static func computeTenantOptions(board: KanbanBoard?) -> [String] {
+        let boardTenants = board?.tenants ?? []
+        let taskTenants = board?.tasks.compactMap(\.tenant) ?? []
         return Array(Set(boardTenants + taskTenants)).sorted {
             $0.localizedStandardCompare($1) == .orderedAscending
+        }
+    }
+
+    private static func computeDisplayStatuses(
+        status: KanbanTaskStatus?,
+        includeArchived: Bool
+    ) -> [KanbanTaskStatus] {
+        if let status {
+            return [status]
+        }
+
+        return KanbanTaskStatus.boardStatuses.filter { candidate in
+            candidate != .archived || includeArchived
         }
     }
 

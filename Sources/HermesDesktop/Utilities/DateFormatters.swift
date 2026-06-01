@@ -10,8 +10,14 @@ extension ISO8601DateFormatter {
 
 enum DateFormatters {
     static func relativeFormatter() -> RelativeDateTimeFormatter {
+        let cacheKey = "HermesDesktop.relativeFormatter"
+        if let formatter = Thread.current.threadDictionary[cacheKey] as? RelativeDateTimeFormatter {
+            return formatter
+        }
+
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
+        Thread.current.threadDictionary[cacheKey] = formatter
         return formatter
     }
 
