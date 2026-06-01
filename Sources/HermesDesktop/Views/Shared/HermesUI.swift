@@ -879,25 +879,22 @@ struct HermesToolbarPrincipalTitle: View {
     }
 }
 
+final class HermesTitleBarConfiguratorView: NSView {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard let window else { return }
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = false
+    }
+}
+
 struct HermesWindowTitleBarConfigurator: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async {
-            applyConfiguration(from: view)
-        }
-        return view
+        HermesTitleBarConfiguratorView(frame: .zero)
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async {
-            applyConfiguration(from: nsView)
-        }
-    }
-
-    private func applyConfiguration(from view: NSView) {
-        guard let window = view.window else { return }
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = false
+        // Configuration is applied in HermesTitleBarConfiguratorView.viewDidMoveToWindow.
     }
 }
 
