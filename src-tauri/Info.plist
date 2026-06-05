@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Required so macOS lets the app (and the local terminal/chat subprocess it
+	     spawns) access the microphone for voice mode (push-to-talk speech input).
+	     Without this key the app never appears in System Settings → Privacy &
+	     Security → Microphone and capture silently returns silence (peak RMS=0).
+	     Tauri v2 merges this file into the generated Contents/Info.plist. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Hermes uses the microphone for voice mode (push-to-talk speech input).</string>
+</dict>
+</plist>

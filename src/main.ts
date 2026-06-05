@@ -1652,6 +1652,18 @@ function mountTerminalRenderer() {
     renderer.terminal.open(container);
     renderer.container = container;
 
+    // Right-click copies the current xterm selection straight to the clipboard.
+    // The OS context menu can't read xterm's canvas selection (its Copy is greyed
+    // out), so when there IS a selection we copy it and suppress the OS menu.
+    // With no selection we let the OS menu through so Paste still works.
+    const xtermForMenu = renderer.terminal;
+    container.addEventListener("contextmenu", (event) => {
+      if (xtermForMenu.hasSelection()) {
+        event.preventDefault();
+        void navigator.clipboard.writeText(xtermForMenu.getSelection()).catch(() => {});
+      }
+    });
+
     if (renderer.resizeObserver) {
       renderer.resizeObserver.disconnect();
     }
@@ -1685,6 +1697,10 @@ function createTerminalRenderer(tab: TerminalLiveTab): TerminalRenderer {
     fontSize: 13,
     lineHeight: 1.2,
     scrollback: 10000,
+    // macOS default is true, which re-selects the single word under the pointer
+    // on right-click, destroying an existing multi-word selection before the
+    // context-menu "Copy" runs. Disable so right-click keeps the real selection.
+    rightClickSelectsWord: false,
     theme: xtermTheme(),
   });
   const fitAddon = new FitAddon();
@@ -1694,6 +1710,23 @@ function createTerminalRenderer(tab: TerminalLiveTab): TerminalRenderer {
     if (filtered) {
       void sendTerminalInput(tab.id, filtered);
     }
+  });
+  // Cmd+C copies the xterm selection. xterm draws its selection on a canvas,
+  // which is NOT a native DOM selection, so the OS context menu's "Copy" can't
+  // see it (shows greyed out). Meta-only — Ctrl+C must still send SIGINT to the
+  // shell. Returning false stops xterm from also forwarding the keystroke.
+  terminal.attachCustomKeyEventHandler((event) => {
+    if (
+      event.type === "keydown" &&
+      event.metaKey &&
+      !event.ctrlKey &&
+      (event.key === "c" || event.key === "C") &&
+      terminal.hasSelection()
+    ) {
+      void navigator.clipboard.writeText(terminal.getSelection()).catch(() => {});
+      return false;
+    }
+    return true;
   });
   return {
     terminal,
@@ -5461,7 +5494,7 @@ async function openTerminalTab(options: {
     const height = panel.clientHeight - terminalChromeHeight;
     if (width > 0 && height > 0) {
       cols = Math.max(40, Math.floor(width / 8)); // 8px font width estimate
-      rows = Math.max(10, Math.min(24, Math.floor(height / 16))); // start conservatively; exact rows sync after xterm mounts
+      rows = Math.max(10, Math.min(60, Math.floor(height / 16))); // start conservatively; exact rows sync after xterm mounts
     }
   }
 

@@ -351,6 +351,14 @@ fn spawn_interactive_local(
     let mut cmd = Command::new(&shell);
     cmd.env("TERM", "xterm-256color")
         .env("COLORTERM", "truecolor")
+        // Voice STT (faster-whisper) loads a model already cached under
+        // ~/.cache/huggingface. Force HuggingFace fully offline so it never
+        // makes a per-load revision-check call to huggingface.co (avoids
+        // recurring firewall prompts and keeps the local-only posture).
+        // Trade-off: blocks downloading a *new* model — if you switch whisper
+        // model size, temporarily unset these.
+        .env("HF_HUB_OFFLINE", "1")
+        .env("TRANSFORMERS_OFFLINE", "1")
         .stdin(Stdio::from(stdin_fd))
         .stdout(Stdio::from(stdout_fd))
         .stderr(Stdio::from(stderr_fd));

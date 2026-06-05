@@ -740,7 +740,7 @@ input[type="checkbox"] {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-height: min(760px, calc(100vh - 150px));
+  min-height: calc(100vh - 140px);
   min-width: 0;
   max-width: 100%;
 }
@@ -847,7 +847,7 @@ input[type="checkbox"] {
   flex: 1 1 560px;
   flex-direction: column;
   min-height: 0;
-  max-height: calc(100vh - 210px);
+  max-height: calc(100vh - 150px);
   border: 1px solid var(--terminal-border);
   border-radius: 8px;
   background: var(--terminal-bg);
@@ -933,8 +933,8 @@ input[type="checkbox"] {
 }
 
 .terminal-screen {
-  flex: 1 1 320px;
-  min-height: 260px;
+  flex: 1 1 560px;
+  min-height: 520px;
   height: auto;
   min-width: 0;
   max-width: 100%;
