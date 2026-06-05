@@ -1,4 +1,5 @@
 mod connection;
+mod control_server;
 mod cron;
 mod discovery;
 mod error;
@@ -1210,6 +1211,9 @@ pub fn run() {
             let storage = AppStorage::new(app.handle())?;
             app.manage(storage);
             app.manage(TerminalState::default());
+            // Localhost control plane (127.0.0.1 + bearer token). Spawned after AppStorage is
+            // managed so its handlers can read it. Never crashes the app on failure.
+            control_server::spawn(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

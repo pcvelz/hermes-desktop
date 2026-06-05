@@ -189,7 +189,25 @@ pub async fn send_session_message_inner(
     prompt: String,
     auto_approve_commands: bool,
 ) -> Result<HermesChatTurnResult> {
-    let mut arguments = vec!["--resume".to_string(), session_id.clone()];
+    chat_inner(profile, Some(session_id), prompt, auto_approve_commands).await
+}
+
+/// Run a Hermes chat turn, optionally resuming an existing session.
+///
+/// When `session_id` is `Some`, the turn resumes that session (`--resume <id>`); when `None`,
+/// a brand-new session is started (no `--resume`). This is the shared engine behind both the
+/// per-session message command and the control endpoint's new/resumed `/chat` route.
+pub async fn chat_inner(
+    profile: ConnectionProfile,
+    session_id: Option<String>,
+    prompt: String,
+    auto_approve_commands: bool,
+) -> Result<HermesChatTurnResult> {
+    let mut arguments = Vec::new();
+    if let Some(session_id) = session_id.as_ref() {
+        arguments.push("--resume".to_string());
+        arguments.push(session_id.clone());
+    }
     if auto_approve_commands {
         arguments.push("--yolo".to_string());
     }
@@ -201,7 +219,7 @@ pub async fn send_session_message_inner(
     ]);
     let request = HermesChatRequest {
         hermes_home: remote_hermes_home_path(&profile),
-        session_id: Some(session_id),
+        session_id,
         timeout_seconds: 1800,
         auto_approve_commands,
         arguments,

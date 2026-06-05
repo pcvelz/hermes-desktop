@@ -546,6 +546,28 @@ void listen<TerminalSessionEvent>("terminal-session-event", (event) => {
   handleTerminalSessionEvent(event.payload);
 });
 
+// A session started out-of-band by the local control endpoint (POST /terminal/session,
+// the API equivalent of "New Shell"). The backend emits the full session info so we can
+// render a visible tab for it — without this the UI would drop its output events on the
+// floor (handleTerminalSessionEvent early-returns for unknown sessions).
+void listen<TerminalSessionInfo>("terminal-session-attach", (event) => {
+  const info = event.payload;
+  if (state.terminalTabs.some((tab) => tab.id === info.id)) {
+    return;
+  }
+  const tab = terminalTabFromInfo(info);
+  state = {
+    ...state,
+    terminalTabs: [...state.terminalTabs, tab],
+    selectedTerminalTabId: tab.id,
+    selectedSection: "terminal",
+    status: t("Terminal tab opened."),
+    error: null,
+  };
+  render();
+  scrollTerminalToBottom();
+});
+
 window.addEventListener("resize", () => {
   const tab = selectedTerminalTab();
   const renderer = tab ? terminalRenderers.get(tab.id) : null;

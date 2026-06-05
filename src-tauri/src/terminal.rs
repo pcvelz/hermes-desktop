@@ -26,9 +26,44 @@ pub const TERMINAL_EVENT_NAME: &str = "terminal-session-event";
 const BRACKETED_PASTE_ENABLE_SEQUENCE: &str = "\x1b[?2004h";
 const INITIAL_INPUT_READINESS_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Per-session rolling output buffer cap (bytes). Keeps the most-recent output so the
+/// control API can read what a session is showing without the GUI; older bytes are dropped.
+const SESSION_OUTPUT_CAP: usize = 256 * 1024;
+
 #[derive(Clone, Default)]
 pub struct TerminalState {
     sessions: Arc<Mutex<HashMap<String, TerminalProcess>>>,
+    /// Accumulated stdout+stderr per session_id, capped at SESSION_OUTPUT_CAP. Fed by the
+    /// reader threads; read out-of-band by the local control endpoint (GET .../output).
+    outputs: Arc<Mutex<HashMap<String, String>>>,
+}
+
+/// Read the captured output buffer for a session (raw bytes incl. ANSI). None if unknown.
+pub fn read_terminal_session_output_inner(
+    state: &TerminalState,
+    session_id: &str,
+) -> Option<String> {
+    state.outputs.lock().ok()?.get(session_id).cloned()
+}
+
+/// Append data to a session's rolling output buffer, trimming the front past the cap.
+fn append_session_output(
+    outputs: &Arc<Mutex<HashMap<String, String>>>,
+    session_id: &str,
+    data: &str,
+) {
+    if let Ok(mut map) = outputs.lock() {
+        let buf = map.entry(session_id.to_string()).or_default();
+        buf.push_str(data);
+        if buf.len() > SESSION_OUTPUT_CAP {
+            let cut = buf.len() - SESSION_OUTPUT_CAP;
+            // cut on a char boundary to keep it valid UTF-8
+            let cut = (cut..buf.len())
+                .find(|&i| buf.is_char_boundary(i))
+                .unwrap_or(buf.len());
+            *buf = buf.split_off(cut);
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -196,6 +231,7 @@ pub fn start_terminal_session_inner(
         TerminalSessionEventKind::Stdout,
         spawn.stdout,
         initial_input_gate.clone(),
+        state.outputs.clone(),
     );
     if let Some(stderr) = spawn.stderr {
         spawn_terminal_reader(
@@ -204,6 +240,7 @@ pub fn start_terminal_session_inner(
             TerminalSessionEventKind::Stderr,
             stderr,
             initial_input_gate.clone(),
+            state.outputs.clone(),
         );
     }
     spawn_terminal_waiter(
@@ -567,6 +604,7 @@ fn spawn_terminal_reader<R>(
     kind: TerminalSessionEventKind,
     mut reader: R,
     initial_input_gate: Option<InitialInputGate>,
+    outputs: Arc<Mutex<HashMap<String, String>>>,
 ) where
     R: Read + Send + 'static,
 {
@@ -577,6 +615,7 @@ fn spawn_terminal_reader<R>(
                 Ok(0) => break,
                 Ok(count) => {
                     let data = String::from_utf8_lossy(&buffer[..count]).to_string();
+                    append_session_output(&outputs, &session_id, &data);
                     if let Some(gate) = &initial_input_gate {
                         gate.observe(&data);
                     }
