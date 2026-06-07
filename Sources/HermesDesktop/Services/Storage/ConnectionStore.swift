@@ -26,8 +26,23 @@ final class ConnectionStore: ObservableObject {
             persistPreferencesIfNeeded()
         }
     }
+    @Published var terminalFontFamily: TerminalFontFamilyPreference = .sfMono {
+        didSet {
+            persistPreferencesIfNeeded()
+        }
+    }
     @Published var appAppearance: AppAppearancePreference = .system {
         didSet {
+            persistPreferencesIfNeeded()
+        }
+    }
+    @Published var windowOpacity: Double = AppWindowOpacityPreference.defaultValue {
+        didSet {
+            let clampedOpacity = AppWindowOpacityPreference.clamped(windowOpacity)
+            if windowOpacity != clampedOpacity {
+                windowOpacity = clampedOpacity
+                return
+            }
             persistPreferencesIfNeeded()
         }
     }
@@ -368,7 +383,9 @@ final class ConnectionStore: ObservableObject {
             lastConnectionID: lastConnectionID,
             terminalTheme: terminalTheme,
             terminalFontSize: terminalFontSize,
+            terminalFontFamily: terminalFontFamily,
             appAppearance: appAppearance,
+            windowOpacity: windowOpacity,
             automaticallyChecksForUpdates: automaticallyChecksForUpdates,
             lastAutomaticUpdateCheckAt: lastAutomaticUpdateCheckAt,
             backgroundImage: backgroundImage,
@@ -434,7 +451,9 @@ final class ConnectionStore: ObservableObject {
                 lastConnectionID: nil,
                 terminalTheme: .defaultValue,
                 terminalFontSize: TerminalFontPreference.defaultSize,
+                terminalFontFamily: .sfMono,
                 appAppearance: .system,
+                windowOpacity: AppWindowOpacityPreference.defaultValue,
                 automaticallyChecksForUpdates: true,
                 lastAutomaticUpdateCheckAt: nil,
                 backgroundImage: nil,
@@ -452,7 +471,9 @@ final class ConnectionStore: ObservableObject {
         lastConnectionID = preferences.lastConnectionID
         terminalTheme = preferences.terminalTheme ?? .defaultValue
         terminalFontSize = TerminalFontPreference.clamped(preferences.terminalFontSize ?? TerminalFontPreference.defaultSize)
+        terminalFontFamily = preferences.terminalFontFamily ?? .sfMono
         appAppearance = preferences.appAppearance ?? .system
+        windowOpacity = AppWindowOpacityPreference.clamped(preferences.windowOpacity ?? AppWindowOpacityPreference.defaultValue)
         automaticallyChecksForUpdates = preferences.automaticallyChecksForUpdates ?? true
         lastAutomaticUpdateCheckAt = preferences.lastAutomaticUpdateCheckAt
         backgroundImage = preferences.backgroundImage
@@ -505,7 +526,9 @@ private struct AppPreferences: Codable {
     var lastConnectionID: UUID?
     var terminalTheme: TerminalThemePreference?
     var terminalFontSize: Double?
+    var terminalFontFamily: TerminalFontFamilyPreference?
     var appAppearance: AppAppearancePreference?
+    var windowOpacity: Double?
     var automaticallyChecksForUpdates: Bool?
     var lastAutomaticUpdateCheckAt: Date?
     var backgroundImage: AppBackgroundImagePreference?

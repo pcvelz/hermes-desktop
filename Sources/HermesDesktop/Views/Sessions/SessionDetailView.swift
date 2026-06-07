@@ -77,6 +77,7 @@ struct SessionDetailView: View {
     let terminalTheme: TerminalThemePreference
     let terminalAppearance: TerminalThemeAppearance
     let terminalFontSize: Double
+    let terminalFontFamily: TerminalFontFamilyPreference
     let isActive: Bool
     let savedScrollOffset: CGFloat?
     let onSaveScrollOffset: (String, CGFloat?) -> Void
@@ -87,6 +88,7 @@ struct SessionDetailView: View {
     let onStartChat: () -> Void
     let onUpdateTerminalTheme: (TerminalThemePreference) -> Void
     let onUpdateTerminalFontSize: (Double) -> Void
+    let onUpdateTerminalFontFamily: (TerminalFontFamilyPreference) -> Void
     let onTerminalExitRefresh: () async -> Void
 
     @Environment(\.backgroundImageActive) private var backgroundImageActive
@@ -206,6 +208,14 @@ struct SessionDetailView: View {
             terminalFontSize
         } set: { newValue in
             onUpdateTerminalFontSize(newValue)
+        }
+    }
+
+    private var terminalFontFamilyBinding: Binding<TerminalFontFamilyPreference> {
+        Binding {
+            terminalFontFamily
+        } set: { newValue in
+            onUpdateTerminalFontFamily(newValue)
         }
     }
 
@@ -343,7 +353,8 @@ struct SessionDetailView: View {
                         appearance: terminalAppearance,
                         isPresented: $isShowingChatAppearanceEditor,
                         themePreference: terminalThemeBinding,
-                        fontSize: terminalFontSizeBinding
+                        fontSize: terminalFontSizeBinding,
+                        fontFamily: terminalFontFamilyBinding
                     )
 
                     if let exitCode = terminal.terminalSession.exitCode {
@@ -360,6 +371,7 @@ struct SessionDetailView: View {
                     session: terminal.terminalSession,
                     appearance: terminalAppearance,
                     fontSize: terminalFontSize,
+                    fontFamily: terminalFontFamily,
                     isActive: isActive && mode == .chat,
                     backgroundImageActive: backgroundImageActive
                 )

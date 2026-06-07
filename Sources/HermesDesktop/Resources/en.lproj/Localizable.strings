@@ -943,7 +943,9 @@
 "Workspace Sidebar is locked while Chat TUI is active" = "Workspace Sidebar is locked while Chat TUI is active";
 "%@ colors · %.0f pt" = "%@ colors · %.0f pt";
 "%.0f pt" = "%.0f pt";
+"%d%%" = "%d%%";
 "Address" = "Address";
+"Adjust app transparency." = "Adjust app transparency.";
 "Cannot delete active profile" = "Cannot delete active profile";
 "Cannot stop tracking this profile" = "Cannot stop tracking this profile";
 "Check automatically for Hermes Desktop updates" = "Check automatically for Hermes Desktop updates";
@@ -968,6 +970,7 @@
 "Detailed information about your host connection." = "Detailed information about your host connection.";
 "Diagnostics not run yet" = "Diagnostics not run yet";
 "Explore files and directories on your host." = "Explore files and directories on your host.";
+"Font" = "Font";
 "Font Size" = "Font Size";
 "Hermes Desktop is connected to your host and ready." = "Hermes Desktop is connected to your host and ready.";
 "Hermes Desktop needs at least one visible profile for the active host." = "Hermes Desktop needs at least one visible profile for the active host.";
@@ -982,6 +985,8 @@
 "Manage the active host connection, Hermes profile, and local app preferences." = "Manage the active host connection, Hermes profile, and local app preferences.";
 "Manage Profiles" = "Manage Profiles";
 "Manage which Hermes profiles this Mac tracks on the active host." = "Manage which Hermes profiles this Mac tracks on the active host.";
+"Menlo" = "Menlo";
+"Monaco" = "Monaco";
 "Move Down" = "Move Down";
 "Move Up" = "Move Up";
 "Need help? Check documentation" = "Need help? Check documentation";
@@ -1002,6 +1007,7 @@
 "Run Diagnostics" = "Run Diagnostics";
 "See recent conversations and history." = "See recent conversations and history.";
 "Settings" = "Settings";
+"SF Mono" = "SF Mono";
 "Show in Sidebar" = "Show in Sidebar";
 "Sidebar" = "Sidebar";
 "SSH alias is used before Host." = "SSH alias is used before Host.";
@@ -1028,6 +1034,7 @@
 "Use the same SSH setup that works in Terminal." = "Use the same SSH setup that works in Terminal.";
 "Waiting for host" = "Waiting for host";
 "Workspace & Profile" = "Workspace & Profile";
+"Window Opacity" = "Window Opacity";
 "Add or select a host to see connection details." = "Add or select a host to see connection details.";
 "Add or select a host, then run diagnostics." = "Add or select a host, then run diagnostics.";
 "Browse Files" = "Browse Files";

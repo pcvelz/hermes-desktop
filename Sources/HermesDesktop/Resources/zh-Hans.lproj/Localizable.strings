@@ -943,7 +943,9 @@
 "Workspace Sidebar is locked while Chat TUI is active" = "Chat TUI 活动时工作区侧边栏会被锁定";
 "%@ colors · %.0f pt" = "%@ colors · %.0f pt";
 "%.0f pt" = "%.0f pt";
+"%d%%" = "%d%%";
 "Address" = "地址";
+"Adjust app transparency." = "调整应用透明度。";
 "Cannot delete active profile" = "无法删除当前配置";
 "Cannot stop tracking this profile" = "无法停止跟踪此配置";
 "Check automatically for Hermes Desktop updates" = "自动检查 Hermes Desktop 更新";
@@ -968,6 +970,7 @@
 "Detailed information about your host connection." = "关于主机连接的详细信息。";
 "Diagnostics not run yet" = "尚未运行诊断";
 "Explore files and directories on your host." = "浏览主机上的文件和目录。";
+"Font" = "字体";
 "Font Size" = "字体大小";
 "Hermes Desktop is connected to your host and ready." = "Hermes Desktop 已连接到主机，可以使用。";
 "Hermes Desktop needs at least one visible profile for the active host." = "Hermes Desktop 需要当前主机至少有一个可见配置。";
@@ -982,6 +985,8 @@
 "Manage the active host connection, Hermes profile, and local app preferences." = "管理当前主机连接、Hermes 配置和本地应用偏好。";
 "Manage Profiles" = "管理配置";
 "Manage which Hermes profiles this Mac tracks on the active host." = "管理这台 Mac 在当前主机上跟踪哪些 Hermes 配置。";
+"Menlo" = "Menlo";
+"Monaco" = "Monaco";
 "Move Down" = "下移";
 "Move Up" = "上移";
 "Need help? Check documentation" = "需要帮助？查看文档";
@@ -1002,6 +1007,7 @@
 "Run Diagnostics" = "运行诊断";
 "See recent conversations and history." = "查看最近的对话和历史记录。";
 "Settings" = "设置";
+"SF Mono" = "SF Mono";
 "Show in Sidebar" = "在侧边栏显示";
 "Sidebar" = "侧边栏";
 "SSH alias is used before Host." = "SSH 别名优先于 Host 使用。";
@@ -1028,6 +1034,7 @@
 "Use the same SSH setup that works in Terminal." = "使用在 Terminal 中可正常工作的同一套 SSH 设置。";
 "Waiting for host" = "正在等待主机";
 "Workspace & Profile" = "工作区和配置";
+"Window Opacity" = "窗口不透明度";
 "Add or select a host to see connection details." = "添加或选择主机以查看连接详情。";
 "Add or select a host, then run diagnostics." = "添加或选择主机，然后运行诊断。";
 "Browse Files" = "浏览文件";

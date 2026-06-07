@@ -87,6 +87,7 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
         in container: TerminalMountContainerView,
         appearance: TerminalThemeAppearance,
         fontSize: Double,
+        fontFamily: TerminalFontFamilyPreference,
         isActive: Bool,
         backgroundImageActive: Bool
     ) {
@@ -101,6 +102,7 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
             ),
             appearance: appearance,
             fontSize: fontSize,
+            fontFamily: fontFamily,
             isActive: isActive,
             backgroundImageActive: backgroundImageActive
         )

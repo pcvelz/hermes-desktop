@@ -4,6 +4,7 @@ struct SwiftTermTerminalView: NSViewRepresentable {
     @ObservedObject var session: TerminalSession
     let appearance: TerminalThemeAppearance
     let fontSize: Double
+    let fontFamily: TerminalFontFamilyPreference
     let isActive: Bool
     let backgroundImageActive: Bool
 
@@ -13,6 +14,7 @@ struct SwiftTermTerminalView: NSViewRepresentable {
             in: container,
             appearance: appearance,
             fontSize: fontSize,
+            fontFamily: fontFamily,
             isActive: isActive,
             backgroundImageActive: backgroundImageActive
         )
@@ -24,6 +26,7 @@ struct SwiftTermTerminalView: NSViewRepresentable {
             in: nsView,
             appearance: appearance,
             fontSize: fontSize,
+            fontFamily: fontFamily,
             isActive: isActive,
             backgroundImageActive: backgroundImageActive
         )

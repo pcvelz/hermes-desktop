@@ -51,6 +51,7 @@ struct SessionsView: View {
                 terminalTheme: appState.connectionStore.terminalTheme,
                 terminalAppearance: appState.connectionStore.terminalTheme.resolvedAppearance,
                 terminalFontSize: appState.connectionStore.terminalFontSize,
+                terminalFontFamily: appState.connectionStore.terminalFontFamily,
                 isActive: isActive,
                 savedScrollOffset: selectedSession.flatMap { selectedSession in
                     appState.savedSessionScrollOffset(for: selectedSession.id)
@@ -78,6 +79,9 @@ struct SessionsView: View {
                 },
                 onUpdateTerminalFontSize: { newValue in
                     appState.connectionStore.terminalFontSize = newValue
+                },
+                onUpdateTerminalFontFamily: { newValue in
+                    appState.connectionStore.terminalFontFamily = newValue
                 },
                 onTerminalExitRefresh: {
                     await appState.refreshSessionsAfterChat()

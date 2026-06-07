@@ -6,6 +6,7 @@ struct TerminalWorkspaceView: View {
     let ensureTerminalSession: () -> Void
     let updateTerminalTheme: (TerminalThemePreference) -> Void
     let updateTerminalFontSize: (Double) -> Void
+    let updateTerminalFontFamily: (TerminalFontFamilyPreference) -> Void
     @State private var isShowingAppearanceEditor = false
     private let tabStripHeight: CGFloat = 44
 
@@ -49,7 +50,8 @@ struct TerminalWorkspaceView: View {
                     appearance: terminalAppearance,
                     isPresented: $isShowingAppearanceEditor,
                     themePreference: terminalThemeBinding,
-                    fontSize: terminalFontSizeBinding
+                    fontSize: terminalFontSizeBinding,
+                    fontFamily: terminalFontFamilyBinding
                 )
             }
             .padding(.horizontal, 16)
@@ -62,6 +64,7 @@ struct TerminalWorkspaceView: View {
                     session: selectedTab.session,
                     appearance: terminalAppearance,
                     fontSize: context.terminalFontSize,
+                    fontFamily: context.terminalFontFamily,
                     isActive: context.isTerminalSectionActive,
                     activeWorkspaceScopeFingerprint: context.activeWorkspaceScopeFingerprint,
                     backgroundImageActive: context.backgroundImageActive
@@ -106,6 +109,14 @@ struct TerminalWorkspaceView: View {
             context.terminalFontSize
         } set: { newValue in
             updateTerminalFontSize(newValue)
+        }
+    }
+
+    private var terminalFontFamilyBinding: Binding<TerminalFontFamilyPreference> {
+        Binding {
+            context.terminalFontFamily
+        } set: { newValue in
+            updateTerminalFontFamily(newValue)
         }
     }
 
@@ -230,6 +241,7 @@ struct TerminalAppearanceToolbarButton: View {
     @Binding var isPresented: Bool
     @Binding var themePreference: TerminalThemePreference
     @Binding var fontSize: Double
+    @Binding var fontFamily: TerminalFontFamilyPreference
 
     var body: some View {
         Button {
@@ -258,7 +270,7 @@ struct TerminalAppearanceToolbarButton: View {
         .buttonStyle(.plain)
         .fixedSize()
         .popover(isPresented: $isPresented, arrowEdge: .top) {
-            TerminalAppearanceEditor(themePreference: $themePreference, fontSize: $fontSize)
+            TerminalAppearanceEditor(themePreference: $themePreference, fontSize: $fontSize, fontFamily: $fontFamily)
         }
         .help(L10n.string("Customize terminal appearance"))
     }
@@ -267,6 +279,7 @@ struct TerminalAppearanceToolbarButton: View {
 struct TerminalAppearanceEditor: View {
     @Binding var themePreference: TerminalThemePreference
     @Binding var fontSize: Double
+    @Binding var fontFamily: TerminalFontFamilyPreference
     var showsHeader = true
     var fixedWidth: CGFloat? = 400
     var contentPadding: CGFloat = 18
@@ -297,10 +310,17 @@ struct TerminalAppearanceEditor: View {
                 }
             }
 
-            TerminalThemePreviewCard(appearance: appearance, fontSize: fontSize)
+            TerminalThemePreviewCard(appearance: appearance, fontSize: fontSize, fontFamily: fontFamily)
 
             HermesInsetSurface {
                 VStack(alignment: .leading, spacing: 10) {
+                    Picker(L10n.string("Font"), selection: $fontFamily) {
+                        ForEach(TerminalFontFamilyPreference.allCases) { family in
+                            Text(L10n.string(family.title))
+                                .tag(family)
+                        }
+                    }
+
                     HStack {
                         Text(L10n.string("Font Size"))
                             .font(.headline)
@@ -442,6 +462,7 @@ struct TerminalAppearanceEditor: View {
 private struct TerminalThemePreviewCard: View {
     let appearance: TerminalThemeAppearance
     let fontSize: Double
+    let fontFamily: TerminalFontFamilyPreference
 
     private var previewFontSize: CGFloat {
         CGFloat(TerminalFontPreference.clamped(fontSize))
@@ -480,7 +501,7 @@ private struct TerminalThemePreviewCard: View {
                 }
                 .font(.caption.weight(.semibold))
             }
-            .font(.system(size: previewFontSize, design: .monospaced))
+            .font(Font(fontFamily.font(size: previewFontSize)))
             .padding(16)
             .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
             .background(

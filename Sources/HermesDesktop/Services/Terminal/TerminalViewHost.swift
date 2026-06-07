@@ -11,6 +11,7 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
     private var initialInputTask: Task<Void, Never>?
     private var appliedAppearance: TerminalThemeAppearance?
     private var appliedFontSize: Double?
+    private var appliedFontFamily: TerminalFontFamilyPreference?
     private var appliedBackgroundImageActive: Bool?
     private var onProcessStart: (() -> Void)?
     private var onTitleChange: ((String) -> Void)?
@@ -39,12 +40,13 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
         request: TerminalLaunchRequest,
         appearance: TerminalThemeAppearance,
         fontSize: Double,
+        fontFamily: TerminalFontFamilyPreference,
         isActive: Bool,
         backgroundImageActive: Bool
     ) {
         container.mount(hostView)
         applyAppearance(appearance, backgroundImageActive: backgroundImageActive)
-        applyFontSize(fontSize)
+        applyFont(fontSize: fontSize, fontFamily: fontFamily)
         setActive(isActive)
         scheduleStartIfNeeded(for: request)
     }
@@ -122,11 +124,12 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
         hostView.apply(appearance: appearance, backgroundImageActive: backgroundImageActive)
     }
 
-    private func applyFontSize(_ fontSize: Double) {
+    private func applyFont(fontSize: Double, fontFamily: TerminalFontFamilyPreference) {
         let clampedFontSize = TerminalFontPreference.clamped(fontSize)
-        guard appliedFontSize != clampedFontSize else { return }
+        guard appliedFontSize != clampedFontSize || appliedFontFamily != fontFamily else { return }
         appliedFontSize = clampedFontSize
-        hostView.apply(fontSize: clampedFontSize)
+        appliedFontFamily = fontFamily
+        hostView.apply(fontSize: clampedFontSize, fontFamily: fontFamily)
     }
 
     private func setActive(_ isActive: Bool) {
@@ -336,11 +339,8 @@ final class TerminalHostView: NSView {
         terminalView.installColors(appearance.ansiPalette.map(Self.makeTerminalColor(from:)))
     }
 
-    func apply(fontSize: Double) {
-        terminalView.font = NSFont.monospacedSystemFont(
-            ofSize: CGFloat(TerminalFontPreference.clamped(fontSize)),
-            weight: .regular
-        )
+    func apply(fontSize: Double, fontFamily: TerminalFontFamilyPreference) {
+        terminalView.font = fontFamily.font(size: fontSize)
     }
 
     func send(_ text: String) {

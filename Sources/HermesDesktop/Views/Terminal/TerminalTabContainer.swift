@@ -4,6 +4,7 @@ struct TerminalTabContainer: View {
     @ObservedObject var session: TerminalSession
     let appearance: TerminalThemeAppearance
     let fontSize: Double
+    let fontFamily: TerminalFontFamilyPreference
     let isActive: Bool
     let activeWorkspaceScopeFingerprint: String?
     let backgroundImageActive: Bool
@@ -54,6 +55,7 @@ struct TerminalTabContainer: View {
                 session: session,
                 appearance: appearance,
                 fontSize: fontSize,
+                fontFamily: fontFamily,
                 isActive: isActive,
                 backgroundImageActive: backgroundImageActive
             )

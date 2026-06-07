@@ -194,6 +194,22 @@ struct ConnectionsView: View {
                     .frame(width: 250)
                 }
 
+                SettingsControlRow(title: "Window Opacity", subtitle: "Adjust app transparency.") {
+                    HStack(spacing: 10) {
+                        Slider(
+                            value: windowOpacityBinding,
+                            in: AppWindowOpacityPreference.minimumValue...AppWindowOpacityPreference.maximumValue,
+                            step: 0.01
+                        )
+                        .frame(width: 180)
+
+                        Text(L10n.string("%d%%", Int(appState.connectionStore.windowOpacity * 100)))
+                            .font(.system(.caption, design: .monospaced).weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 42, alignment: .trailing)
+                    }
+                }
+
                 Divider()
 
                 SidebarCustomizationPanel(
@@ -213,6 +229,7 @@ struct ConnectionsView: View {
                 TerminalAppearanceEditor(
                     themePreference: terminalThemeBinding,
                     fontSize: terminalFontSizeBinding,
+                    fontFamily: terminalFontFamilyBinding,
                     showsHeader: false,
                     fixedWidth: nil,
                     contentPadding: 0
@@ -516,6 +533,22 @@ struct ConnectionsView: View {
             appState.connectionStore.terminalFontSize
         } set: { newValue in
             appState.connectionStore.terminalFontSize = newValue
+        }
+    }
+
+    private var terminalFontFamilyBinding: Binding<TerminalFontFamilyPreference> {
+        Binding {
+            appState.connectionStore.terminalFontFamily
+        } set: { newValue in
+            appState.connectionStore.terminalFontFamily = newValue
+        }
+    }
+
+    private var windowOpacityBinding: Binding<Double> {
+        Binding {
+            appState.connectionStore.windowOpacity
+        } set: { newValue in
+            appState.connectionStore.windowOpacity = newValue
         }
     }
 

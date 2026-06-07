@@ -13,7 +13,8 @@ struct HermesDesktopApp: App {
                 .frame(minWidth: 940, minHeight: 520)
                 .background(
                     HermesWindowTitleBarConfigurator(
-                        backgroundImageActive: appState.connectionStore.isBackgroundImageActive
+                        backgroundImageActive: appState.connectionStore.isBackgroundImageActive,
+                        windowOpacity: appState.connectionStore.windowOpacity
                     )
                 )
         }

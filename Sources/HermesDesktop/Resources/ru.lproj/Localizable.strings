@@ -943,7 +943,9 @@
 "Workspace Sidebar is locked while Chat TUI is active" = "Боковая панель рабочего пространства заблокирована, пока активен Chat TUI";
 "%@ colors · %.0f pt" = "%@ colors · %.0f pt";
 "%.0f pt" = "%.0f pt";
+"%d%%" = "%d%%";
 "Address" = "Адрес";
+"Adjust app transparency." = "Настройте прозрачность приложения.";
 "Cannot delete active profile" = "Нельзя удалить активный профиль";
 "Cannot stop tracking this profile" = "Нельзя прекратить отслеживание этого профиля";
 "Check automatically for Hermes Desktop updates" = "Автоматически проверять обновления Hermes Desktop";
@@ -968,6 +970,7 @@
 "Detailed information about your host connection." = "Подробная информация о подключении к хосту.";
 "Diagnostics not run yet" = "Диагностика ещё не запускалась";
 "Explore files and directories on your host." = "Просматривайте файлы и папки на вашем хосте.";
+"Font" = "Шрифт";
 "Font Size" = "Размер шрифта";
 "Hermes Desktop is connected to your host and ready." = "Hermes Desktop подключен к хосту и готов к работе.";
 "Hermes Desktop needs at least one visible profile for the active host." = "Для активного хоста Hermes Desktop нужен хотя бы один видимый профиль.";
@@ -982,6 +985,8 @@
 "Manage the active host connection, Hermes profile, and local app preferences." = "Управляйте активным подключением к хосту, профилем Hermes и локальными настройками приложения.";
 "Manage Profiles" = "Управлять профилями";
 "Manage which Hermes profiles this Mac tracks on the active host." = "Управляйте профилями Hermes, которые этот Mac отслеживает на активном хосте.";
+"Menlo" = "Menlo";
+"Monaco" = "Monaco";
 "Move Down" = "Переместить вниз";
 "Move Up" = "Переместить вверх";
 "Need help? Check documentation" = "Нужна помощь? Откройте документацию";
@@ -1002,6 +1007,7 @@
 "Run Diagnostics" = "Запустить диагностику";
 "See recent conversations and history." = "Просматривайте недавние диалоги и историю.";
 "Settings" = "Настройки";
+"SF Mono" = "SF Mono";
 "Show in Sidebar" = "Показывать в боковой панели";
 "Sidebar" = "Боковая панель";
 "SSH alias is used before Host." = "SSH-алиас используется раньше поля Host.";
@@ -1028,6 +1034,7 @@
 "Use the same SSH setup that works in Terminal." = "Используйте ту же SSH-настройку, которая работает в Terminal.";
 "Waiting for host" = "Ожидание хоста";
 "Workspace & Profile" = "Рабочее пространство и профиль";
+"Window Opacity" = "Прозрачность окна";
 "Add or select a host to see connection details." = "Добавьте или выберите хост, чтобы увидеть сведения о подключении.";
 "Add or select a host, then run diagnostics." = "Добавьте или выберите хост, затем запустите диагностику.";
 "Browse Files" = "Просмотреть файлы";

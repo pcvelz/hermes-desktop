@@ -351,6 +351,7 @@ struct RootView: View {
                     isTerminalSectionActive: appState.selectedSection == .terminal,
                     terminalTheme: appState.connectionStore.terminalTheme,
                     terminalFontSize: appState.connectionStore.terminalFontSize,
+                    terminalFontFamily: appState.connectionStore.terminalFontFamily,
                     backgroundImageActive: appState.connectionStore.isBackgroundImageActive
                 ),
                 ensureTerminalSession: {
@@ -361,6 +362,9 @@ struct RootView: View {
                 },
                 updateTerminalFontSize: { newValue in
                     appState.connectionStore.terminalFontSize = newValue
+                },
+                updateTerminalFontFamily: { newValue in
+                    appState.connectionStore.terminalFontFamily = newValue
                 }
             )
         }

@@ -910,6 +910,11 @@ final class HermesTitleBarConfiguratorView: NSView {
             configureWindow()
         }
     }
+    var windowOpacity = AppWindowOpacityPreference.defaultValue {
+        didSet {
+            configureWindow()
+        }
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -920,13 +925,15 @@ final class HermesTitleBarConfiguratorView: NSView {
         guard let window else { return }
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = backgroundImageActive
-        window.isOpaque = !backgroundImageActive
-        window.backgroundColor = backgroundImageActive ? .clear : .windowBackgroundColor
+        window.alphaValue = CGFloat(AppWindowOpacityPreference.clamped(windowOpacity))
+        window.isOpaque = !backgroundImageActive && window.alphaValue >= 1.0
+        window.backgroundColor = backgroundImageActive || window.alphaValue < 1.0 ? .clear : .windowBackgroundColor
     }
 }
 
 struct HermesWindowTitleBarConfigurator: NSViewRepresentable {
     let backgroundImageActive: Bool
+    let windowOpacity: Double
 
     func makeNSView(context: Context) -> HermesTitleBarConfiguratorView {
         HermesTitleBarConfiguratorView(frame: .zero)
@@ -934,6 +941,7 @@ struct HermesWindowTitleBarConfigurator: NSViewRepresentable {
 
     func updateNSView(_ nsView: HermesTitleBarConfiguratorView, context: Context) {
         nsView.backgroundImageActive = backgroundImageActive
+        nsView.windowOpacity = windowOpacity
     }
 }
 
