@@ -10,7 +10,7 @@ struct HermesDesktopApp: App {
         WindowGroup("Hermes Desktop") {
             RootView()
                 .environmentObject(appState)
-                .frame(minWidth: 520, minHeight: 520)
+                .frame(minWidth: HermesSplitMetrics.minimumWindowWidth, minHeight: 520)
                 .background(
                     HermesWindowTitleBarConfigurator(
                         backgroundImageActive: appState.connectionStore.isBackgroundImageActive,

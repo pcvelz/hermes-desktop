@@ -112,7 +112,6 @@ enum HermesSplitMetrics {
         static let minWidth: CGFloat = 120
         static let defaultWidth: CGFloat = 168
         static let maxWidth: CGFloat = 210
-        static let collapseThreshold: CGFloat = 96
         static let detailFallbackMinWidth: CGFloat = 320
     }
 
@@ -120,7 +119,6 @@ enum HermesSplitMetrics {
         static let minWidth: CGFloat = 260
         static let defaultWidth: CGFloat = 380
         static let maxWidth: CGFloat = 760
-        static let collapseThreshold: CGFloat = 220
     }
 
     enum WorkbenchDetail {
@@ -132,12 +130,17 @@ enum HermesSplitMetrics {
         static let editorIdealWidth: CGFloat = 640
     }
 
+    static let minimumWindowWidth =
+        WorkspaceSidebar.minWidth +
+        WorkbenchBrowser.minWidth +
+        WorkbenchDetail.editorMinWidth +
+        (HermesSplitLayout.resizeHandleWidth * 2)
+
     static var standardWorkbenchBrowserLayout: HermesSplitLayout {
         HermesSplitLayout(
             minPrimaryWidth: WorkbenchBrowser.minWidth,
             defaultPrimaryWidth: WorkbenchBrowser.defaultWidth,
-            maxPrimaryWidth: WorkbenchBrowser.maxWidth,
-            primaryCollapseThreshold: WorkbenchBrowser.collapseThreshold
+            maxPrimaryWidth: WorkbenchBrowser.maxWidth
         )
     }
 }
@@ -838,39 +841,23 @@ struct HermesSplitLayout: Equatable {
     let minPrimaryWidth: CGFloat
     let defaultPrimaryWidth: CGFloat
     let maxPrimaryWidth: CGFloat
-    let primaryCollapseThreshold: CGFloat?
     var primaryWidth: CGFloat?
     var isPrimaryCollapsed: Bool
-    var isPrimaryAutomaticallyCollapsed: Bool
 
     init(
         minPrimaryWidth: CGFloat,
         defaultPrimaryWidth: CGFloat,
         maxPrimaryWidth: CGFloat = 760,
-        primaryCollapseThreshold: CGFloat? = nil,
-        isPrimaryCollapsed: Bool = false,
-        isPrimaryAutomaticallyCollapsed: Bool = false
+        isPrimaryCollapsed: Bool = false
     ) {
         self.minPrimaryWidth = minPrimaryWidth
         self.defaultPrimaryWidth = defaultPrimaryWidth
         self.maxPrimaryWidth = max(maxPrimaryWidth, minPrimaryWidth)
-        self.primaryCollapseThreshold = primaryCollapseThreshold
         self.isPrimaryCollapsed = isPrimaryCollapsed
-        self.isPrimaryAutomaticallyCollapsed = isPrimaryAutomaticallyCollapsed
-    }
-
-    var isPrimaryEffectivelyCollapsed: Bool {
-        isPrimaryCollapsed || isPrimaryAutomaticallyCollapsed
     }
 
     mutating func togglePrimaryCollapsed() {
-        if isPrimaryCollapsed {
-            isPrimaryCollapsed = false
-            isPrimaryAutomaticallyCollapsed = false
-        } else {
-            isPrimaryCollapsed = true
-            isPrimaryAutomaticallyCollapsed = false
-        }
+        isPrimaryCollapsed.toggle()
     }
 
     func expandedWidthRequirement(detailMinWidth: CGFloat) -> CGFloat {
@@ -879,11 +866,6 @@ struct HermesSplitLayout: Equatable {
 
     var preferredPrimaryWidth: CGFloat {
         clamped(primaryWidth ?? defaultPrimaryWidth)
-    }
-
-    var draggableMinimumPrimaryWidth: CGFloat {
-        guard let primaryCollapseThreshold else { return minPrimaryWidth }
-        return min(minPrimaryWidth, primaryCollapseThreshold)
     }
 
     mutating func rememberPrimaryWidth(_ width: CGFloat) {
@@ -902,7 +884,7 @@ struct HermesSplitLayout: Equatable {
     }
 
     func clampedLivePrimaryWidth(_ width: CGFloat) -> CGFloat {
-        min(max(width, draggableMinimumPrimaryWidth), maxPrimaryWidth)
+        clamped(width)
     }
 }
 
@@ -1034,10 +1016,8 @@ struct HermesCollapsibleHSplitView<Primary: View, Detail: View>: View {
     let detail: Detail
     private let collapseAnimation = Animation.snappy(duration: 0.16, extraBounce: 0)
     private let resizeUpdateStep: CGFloat = 1
-    private let collapseResistanceDistance: CGFloat = 56
     @State private var activeResizeStartingWidth: CGFloat?
     @State private var activeResizeLiveWidth: CGFloat?
-    @State private var activeResizeTargetWidth: CGFloat?
 
     init(
         layout: Binding<HermesSplitLayout>,
@@ -1058,8 +1038,7 @@ struct HermesCollapsibleHSplitView<Primary: View, Detail: View>: View {
     var body: some View {
         GeometryReader { geometry in
             let availableWidth = geometry.size.width
-            let canShowPrimary = canShowPrimary(in: availableWidth)
-            let showsPrimary = !layout.isPrimaryCollapsed && canShowPrimary
+            let showsPrimary = !layout.isPrimaryCollapsed
             let primaryWidth = activeResizeLiveWidth ?? resolvedPrimaryWidth(in: availableWidth)
 
             HStack(spacing: 0) {
@@ -1075,17 +1054,14 @@ struct HermesCollapsibleHSplitView<Primary: View, Detail: View>: View {
 
                 if showsPrimary {
                     HermesSplitResizeHandle(
-                        isPrimedForCollapse: isResizePrimedForCollapse,
                         onDragStart: {
                             activeResizeStartingWidth = layout.primaryWidth ?? layout.preferredPrimaryWidth
-                            activeResizeTargetWidth = activeResizeStartingWidth
                         },
                         onDrag: { translation in
                             let startWidth = activeResizeStartingWidth ?? layout.preferredPrimaryWidth
                             let targetWidth = layout.clampedLivePrimaryWidth(startWidth + translation)
-                            let nextWidth = roundedResizeWidth(resistedLivePrimaryWidth(for: targetWidth))
+                            let nextWidth = roundedResizeWidth(targetWidth)
                             let currentWidth = activeResizeLiveWidth ?? startWidth
-                            activeResizeTargetWidth = targetWidth
                             guard abs(currentWidth - nextWidth) >= resizeUpdateStep else { return }
 
                             var transaction = Transaction()
@@ -1095,19 +1071,10 @@ struct HermesCollapsibleHSplitView<Primary: View, Detail: View>: View {
                             }
                         },
                         onDragEnd: {
-                            let finalWidth = activeResizeTargetWidth ?? activeResizeLiveWidth ?? layout.primaryWidth ?? layout.preferredPrimaryWidth
+                            let finalWidth = activeResizeLiveWidth ?? layout.primaryWidth ?? layout.preferredPrimaryWidth
                             activeResizeStartingWidth = nil
                             activeResizeLiveWidth = nil
-                            activeResizeTargetWidth = nil
-
-                            if shouldCollapseAfterDrag(finalWidth) {
-                                withAnimation(collapseAnimation) {
-                                    layout.isPrimaryCollapsed = true
-                                    layout.isPrimaryAutomaticallyCollapsed = false
-                                }
-                            } else {
-                                layout.rememberPrimaryWidth(finalWidth)
-                            }
+                            layout.rememberPrimaryWidth(finalWidth)
                         }
                     )
                     .transition(usesTransition ? .opacity : .identity)
@@ -1119,24 +1086,9 @@ struct HermesCollapsibleHSplitView<Primary: View, Detail: View>: View {
                     .clipped()
             }
             .frame(width: availableWidth, height: geometry.size.height, alignment: .leading)
-            .onAppear {
-                reconcileAutomaticCollapse(canShowPrimary: canShowPrimary)
-            }
-            .onChange(of: canShowPrimary) { _, newValue in
-                reconcileAutomaticCollapse(canShowPrimary: newValue)
-            }
-            .onChange(of: layout.isPrimaryCollapsed) { _, _ in
-                reconcileAutomaticCollapse(canShowPrimary: canShowPrimary)
-            }
             .animation(usesTransition && activeResizeStartingWidth == nil ? collapseAnimation : nil, value: showsPrimary)
         }
         .clipped()
-    }
-
-    private func canShowPrimary(in availableWidth: CGFloat) -> Bool {
-        guard availableWidth.isFinite, availableWidth > 0 else { return false }
-        guard detailMinWidth > 0 else { return true }
-        return availableWidth >= layout.minPrimaryWidth + detailMinWidth + HermesSplitResizeHandle.width
     }
 
     private func resolvedPrimaryWidth(in availableWidth: CGFloat) -> CGFloat {
@@ -1145,40 +1097,6 @@ struct HermesCollapsibleHSplitView<Primary: View, Detail: View>: View {
             availableWidth - detailMinWidth - HermesSplitResizeHandle.width
         )
         return min(layout.preferredPrimaryWidth, availableBeforeDetail)
-    }
-
-    private func shouldCollapseAfterDrag(_ width: CGFloat) -> Bool {
-        guard let threshold = layout.primaryCollapseThreshold else { return false }
-        return width <= threshold
-    }
-
-    private var isResizePrimedForCollapse: Bool {
-        guard let activeResizeTargetWidth,
-              let threshold = layout.primaryCollapseThreshold else {
-            return false
-        }
-
-        return activeResizeTargetWidth <= threshold
-    }
-
-    private func resistedLivePrimaryWidth(for targetWidth: CGFloat) -> CGFloat {
-        guard layout.primaryCollapseThreshold != nil,
-              targetWidth < layout.minPrimaryWidth else {
-            return targetWidth
-        }
-
-        let overshoot = layout.minPrimaryWidth - targetWidth
-        let resistanceProgress = min(1, overshoot / collapseResistanceDistance)
-        let remainingProgress = 1 - resistanceProgress
-        let easedProgress = 1 - (remainingProgress * remainingProgress)
-        let visibleCompression = overshoot * (0.42 + (0.18 * easedProgress))
-        return max(layout.draggableMinimumPrimaryWidth, layout.minPrimaryWidth - visibleCompression)
-    }
-
-    private func reconcileAutomaticCollapse(canShowPrimary: Bool) {
-        let shouldAutoCollapse = !canShowPrimary
-        guard layout.isPrimaryAutomaticallyCollapsed != shouldAutoCollapse else { return }
-        layout.isPrimaryAutomaticallyCollapsed = shouldAutoCollapse
     }
 
     private func roundedResizeWidth(_ width: CGFloat) -> CGFloat {
@@ -1191,7 +1109,6 @@ private struct HermesSplitResizeHandle: View {
     private static let hitWidth: CGFloat = 18
     private static let activeVisibleWidth: CGFloat = 3
 
-    let isPrimedForCollapse: Bool
     let onDragStart: () -> Void
     let onDrag: (CGFloat) -> Void
     let onDragEnd: () -> Void
@@ -1234,16 +1151,11 @@ private struct HermesSplitResizeHandle: View {
             .padding(.horizontal, -hitOutset)
             .animation(.easeOut(duration: 0.12), value: isHovering)
             .animation(.easeOut(duration: 0.12), value: isDragging)
-            .animation(.easeOut(duration: 0.12), value: isPrimedForCollapse)
             .accessibilityLabel(Text("Resize pane"))
             .accessibilityHint(Text("Drag horizontally to resize this column"))
     }
 
     private var handleFill: Color {
-        if isPrimedForCollapse {
-            return Color.accentColor.opacity(isDragging ? 0.38 : 0.26)
-        }
-
         return Color.secondary.opacity(isDragging ? 0.28 : (isHovering ? 0.18 : 0.08))
     }
 }

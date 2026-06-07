@@ -421,25 +421,7 @@ private struct SessionCardRow: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(session.resolvedTitle)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .multilineTextAlignment(.leading)
-
-                    Text(session.id)
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 12)
-
-                if let count = session.messageCount {
-                    HermesBadge(text: L10n.string("%@ messages", "\(count)"), tint: .secondary)
-                }
-            }
+            header
 
             if let searchMatch = session.searchMatch,
                let snippet = searchMatch.snippet,
@@ -475,6 +457,50 @@ private struct SessionCardRow: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var header: some View {
+        if let count = session.messageCount {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 10) {
+                    titleBlock
+                        .frame(minWidth: 120, maxWidth: .infinity, alignment: .leading)
+                        .layoutPriority(1)
+
+                    HermesBadge(text: L10n.string("%@ messages", "\(count)"), tint: .secondary)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    titleBlock
+
+                    HermesBadge(text: L10n.string("%@ messages", "\(count)"), tint: .secondary)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+        } else {
+            titleBlock
+        }
+    }
+
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(session.resolvedTitle)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .truncationMode(.tail)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(session.id)
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func searchMatchPreview(_ match: SessionSearchMatch, snippet: String) -> some View {

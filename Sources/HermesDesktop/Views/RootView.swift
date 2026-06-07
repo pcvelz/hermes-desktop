@@ -8,8 +8,7 @@ struct RootView: View {
     @State private var workspaceSplitLayout = HermesSplitLayout(
         minPrimaryWidth: HermesSplitMetrics.WorkspaceSidebar.minWidth,
         defaultPrimaryWidth: HermesSplitMetrics.WorkspaceSidebar.defaultWidth,
-        maxPrimaryWidth: HermesSplitMetrics.WorkspaceSidebar.maxWidth,
-        primaryCollapseThreshold: HermesSplitMetrics.WorkspaceSidebar.collapseThreshold
+        maxPrimaryWidth: HermesSplitMetrics.WorkspaceSidebar.maxWidth
     )
     @State private var sessionsSplitLayout = HermesSplitMetrics.standardWorkbenchBrowserLayout
     @State private var cronJobsSplitLayout = HermesSplitMetrics.standardWorkbenchBrowserLayout
@@ -23,20 +22,17 @@ struct RootView: View {
             .toolbar {
                 ToolbarItemGroup(placement: .navigation) {
                     HermesToolbarControlCluster {
-                        if !isWorkspaceSidebarAutomaticallyCollapsed {
-                            HermesCollapseToolbarButton(
-                                systemImage: "sidebar.left",
-                                isActive: isWorkspaceSidebarCollapsed,
-                                isEnabled: isWorkspaceSidebarCollapseEnabled,
-                                help: workspaceSidebarCollapseHelp
-                            ) {
-                                guard isWorkspaceSidebarCollapseEnabled else { return }
-                                workspaceSidebarSplitLayout.wrappedValue.togglePrimaryCollapsed()
-                            }
+                        HermesCollapseToolbarButton(
+                            systemImage: "sidebar.left",
+                            isActive: isWorkspaceSidebarCollapsed,
+                            isEnabled: isWorkspaceSidebarCollapseEnabled,
+                            help: workspaceSidebarCollapseHelp
+                        ) {
+                            guard isWorkspaceSidebarCollapseEnabled else { return }
+                            workspaceSidebarSplitLayout.wrappedValue.togglePrimaryCollapsed()
                         }
 
-                        if currentWorkbenchPrimaryColumnLayout != nil,
-                           !currentWorkbenchPrimaryColumnAutomaticallyCollapsed {
+                        if currentWorkbenchPrimaryColumnLayout != nil {
                             HermesCollapseToolbarButton(
                                 systemImage: "rectangle.leftthird.inset.filled",
                                 isActive: currentWorkbenchPrimaryColumnUserCollapsed,
@@ -236,10 +232,6 @@ struct RootView: View {
         true
     }
 
-    private var isWorkspaceSidebarAutomaticallyCollapsed: Bool {
-        workspaceSidebarSplitLayout.wrappedValue.isPrimaryAutomaticallyCollapsed
-    }
-
     private var workspaceSidebarCollapseHelp: String {
         return isWorkspaceSidebarCollapsed
             ? L10n.string("Show Workspace Sidebar")
@@ -271,10 +263,6 @@ struct RootView: View {
         currentWorkbenchPrimaryColumnLayout?.wrappedValue.isPrimaryCollapsed ?? false
     }
 
-    private var currentWorkbenchPrimaryColumnAutomaticallyCollapsed: Bool {
-        currentWorkbenchPrimaryColumnLayout?.wrappedValue.isPrimaryAutomaticallyCollapsed ?? false
-    }
-
     private var currentWorkbenchPrimaryColumnCollapseHelp: String {
         return currentWorkbenchPrimaryColumnUserCollapsed
             ? L10n.string("Show Section Browser")
@@ -288,7 +276,7 @@ struct RootView: View {
 
     private var workspaceSidebarDetailMinWidth: CGFloat {
         guard let layout = currentWorkbenchPrimaryColumnLayout?.wrappedValue,
-              !layout.isPrimaryEffectivelyCollapsed,
+              !layout.isPrimaryCollapsed,
               let detailMinWidth = currentWorkbenchDetailMinWidth else {
             return HermesSplitMetrics.WorkspaceSidebar.detailFallbackMinWidth
         }
