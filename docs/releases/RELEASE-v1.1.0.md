@@ -21,6 +21,11 @@ Fixes:
 - make a newly saved first host active immediately
 - select the next available host after deleting the active host
 
+Thanks to @Yunle-Lee for sharing early PRs around background images and terminal
+scrolling. The appearance customization landed through a separate
+implementation, and PR #56 helped shape the terminal scrolling fix included in
+this release.
+
 Hermes Desktop 1.1.0 keeps the same distribution model as v1.0.0: a universal
 macOS app bundle, ad-hoc signed, not notarized by Apple, with zip checksum and
 release manifest assets.
