@@ -11,7 +11,7 @@ struct SessionsView: View {
     var body: some View {
         HermesCollapsibleHSplitView(
             layout: $splitLayout,
-            detailMinWidth: 420,
+            detailMinWidth: HermesSplitMetrics.WorkbenchDetail.standardMinWidth,
             usesTransition: !isSessionChatTerminalVisible,
             keepsSplitViewWhenCollapsed: isSessionChatTerminalVisible
         ) {
@@ -87,7 +87,10 @@ struct SessionsView: View {
                     await appState.refreshSessionsAfterChat()
                 }
             )
-            .hermesSplitDetailColumn(minWidth: 420, idealWidth: 520)
+            .hermesSplitDetailColumn(
+                minWidth: HermesSplitMetrics.WorkbenchDetail.standardMinWidth,
+                idealWidth: HermesSplitMetrics.WorkbenchDetail.sessionsIdealWidth
+            )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .task(id: sessionsLoadTaskID) {

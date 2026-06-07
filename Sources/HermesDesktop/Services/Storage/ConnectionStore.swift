@@ -46,6 +46,26 @@ final class ConnectionStore: ObservableObject {
             persistPreferencesIfNeeded()
         }
     }
+    @Published var windowMaterial: AppWindowMaterialPreference = .solid {
+        didSet {
+            persistPreferencesIfNeeded()
+        }
+    }
+    @Published var backgroundImageFit: AppBackgroundImageFitPreference = .fill {
+        didSet {
+            persistPreferencesIfNeeded()
+        }
+    }
+    @Published var backgroundImageBlur: Double = AppBackgroundImageBlurPreference.defaultValue {
+        didSet {
+            let clampedBlur = AppBackgroundImageBlurPreference.clamped(backgroundImageBlur)
+            if backgroundImageBlur != clampedBlur {
+                backgroundImageBlur = clampedBlur
+                return
+            }
+            persistPreferencesIfNeeded()
+        }
+    }
     @Published var automaticallyChecksForUpdates = true {
         didSet {
             persistPreferencesIfNeeded()
@@ -386,6 +406,9 @@ final class ConnectionStore: ObservableObject {
             terminalFontFamily: terminalFontFamily,
             appAppearance: appAppearance,
             windowOpacity: windowOpacity,
+            windowMaterial: windowMaterial,
+            backgroundImageFit: backgroundImageFit,
+            backgroundImageBlur: backgroundImageBlur,
             automaticallyChecksForUpdates: automaticallyChecksForUpdates,
             lastAutomaticUpdateCheckAt: lastAutomaticUpdateCheckAt,
             backgroundImage: backgroundImage,
@@ -454,6 +477,9 @@ final class ConnectionStore: ObservableObject {
                 terminalFontFamily: .sfMono,
                 appAppearance: .system,
                 windowOpacity: AppWindowOpacityPreference.defaultValue,
+                windowMaterial: .solid,
+                backgroundImageFit: .fill,
+                backgroundImageBlur: AppBackgroundImageBlurPreference.defaultValue,
                 automaticallyChecksForUpdates: true,
                 lastAutomaticUpdateCheckAt: nil,
                 backgroundImage: nil,
@@ -474,6 +500,9 @@ final class ConnectionStore: ObservableObject {
         terminalFontFamily = preferences.terminalFontFamily ?? .sfMono
         appAppearance = preferences.appAppearance ?? .system
         windowOpacity = AppWindowOpacityPreference.clamped(preferences.windowOpacity ?? AppWindowOpacityPreference.defaultValue)
+        windowMaterial = preferences.windowMaterial ?? .solid
+        backgroundImageFit = preferences.backgroundImageFit ?? .fill
+        backgroundImageBlur = AppBackgroundImageBlurPreference.clamped(preferences.backgroundImageBlur ?? AppBackgroundImageBlurPreference.defaultValue)
         automaticallyChecksForUpdates = preferences.automaticallyChecksForUpdates ?? true
         lastAutomaticUpdateCheckAt = preferences.lastAutomaticUpdateCheckAt
         backgroundImage = preferences.backgroundImage
@@ -529,6 +558,9 @@ private struct AppPreferences: Codable {
     var terminalFontFamily: TerminalFontFamilyPreference?
     var appAppearance: AppAppearancePreference?
     var windowOpacity: Double?
+    var windowMaterial: AppWindowMaterialPreference?
+    var backgroundImageFit: AppBackgroundImageFitPreference?
+    var backgroundImageBlur: Double?
     var automaticallyChecksForUpdates: Bool?
     var lastAutomaticUpdateCheckAt: Date?
     var backgroundImage: AppBackgroundImagePreference?

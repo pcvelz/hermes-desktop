@@ -11,7 +11,7 @@ struct WorkflowsView: View {
     @State private var showDeleteConfirmation = false
 
     var body: some View {
-        HermesCollapsibleHSplitView(layout: $splitLayout, detailMinWidth: 460) {
+        HermesCollapsibleHSplitView(layout: $splitLayout, detailMinWidth: HermesSplitMetrics.WorkbenchDetail.editorMinWidth) {
             VStack(alignment: .leading, spacing: 18) {
                 HermesPageHeader(
                     title: "Workflows",
@@ -34,7 +34,10 @@ struct WorkflowsView: View {
             .padding(.vertical, 20)
         } detail: {
             detailContent
-                .hermesSplitDetailColumn(minWidth: 460, idealWidth: 600)
+                .hermesSplitDetailColumn(
+                    minWidth: HermesSplitMetrics.WorkbenchDetail.editorMinWidth,
+                    idealWidth: HermesSplitMetrics.WorkbenchDetail.formIdealWidth
+                )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .task(id: appState.activeConnectionID) {

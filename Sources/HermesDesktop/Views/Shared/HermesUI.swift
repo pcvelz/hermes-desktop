@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 private struct BackgroundImageActiveKey: EnvironmentKey {
@@ -103,6 +104,41 @@ enum HermesPageWidth {
         case .analytics:
             return 1560
         }
+    }
+}
+
+enum HermesSplitMetrics {
+    enum WorkspaceSidebar {
+        static let minWidth: CGFloat = 120
+        static let defaultWidth: CGFloat = 168
+        static let maxWidth: CGFloat = 210
+        static let collapseThreshold: CGFloat = 96
+        static let detailFallbackMinWidth: CGFloat = 320
+    }
+
+    enum WorkbenchBrowser {
+        static let minWidth: CGFloat = 260
+        static let defaultWidth: CGFloat = 380
+        static let maxWidth: CGFloat = 760
+        static let collapseThreshold: CGFloat = 220
+    }
+
+    enum WorkbenchDetail {
+        static let standardMinWidth: CGFloat = 420
+        static let editorMinWidth: CGFloat = 460
+        static let sessionsIdealWidth: CGFloat = 520
+        static let standardIdealWidth: CGFloat = 560
+        static let formIdealWidth: CGFloat = 600
+        static let editorIdealWidth: CGFloat = 640
+    }
+
+    static var standardWorkbenchBrowserLayout: HermesSplitLayout {
+        HermesSplitLayout(
+            minPrimaryWidth: WorkbenchBrowser.minWidth,
+            defaultPrimaryWidth: WorkbenchBrowser.defaultWidth,
+            maxPrimaryWidth: WorkbenchBrowser.maxWidth,
+            primaryCollapseThreshold: WorkbenchBrowser.collapseThreshold
+        )
     }
 }
 
@@ -797,26 +833,57 @@ struct HermesSearchActionBar<LeadingContent: View>: View {
 }
 
 struct HermesSplitLayout: Equatable {
+    static let resizeHandleWidth: CGFloat = 1
+
     let minPrimaryWidth: CGFloat
     let defaultPrimaryWidth: CGFloat
     let maxPrimaryWidth: CGFloat
+    let primaryCollapseThreshold: CGFloat?
     var primaryWidth: CGFloat?
     var isPrimaryCollapsed: Bool
+    var isPrimaryAutomaticallyCollapsed: Bool
 
     init(
         minPrimaryWidth: CGFloat,
         defaultPrimaryWidth: CGFloat,
         maxPrimaryWidth: CGFloat = 760,
-        isPrimaryCollapsed: Bool = false
+        primaryCollapseThreshold: CGFloat? = nil,
+        isPrimaryCollapsed: Bool = false,
+        isPrimaryAutomaticallyCollapsed: Bool = false
     ) {
         self.minPrimaryWidth = minPrimaryWidth
         self.defaultPrimaryWidth = defaultPrimaryWidth
         self.maxPrimaryWidth = max(maxPrimaryWidth, minPrimaryWidth)
+        self.primaryCollapseThreshold = primaryCollapseThreshold
         self.isPrimaryCollapsed = isPrimaryCollapsed
+        self.isPrimaryAutomaticallyCollapsed = isPrimaryAutomaticallyCollapsed
+    }
+
+    var isPrimaryEffectivelyCollapsed: Bool {
+        isPrimaryCollapsed || isPrimaryAutomaticallyCollapsed
+    }
+
+    mutating func togglePrimaryCollapsed() {
+        if isPrimaryCollapsed {
+            isPrimaryCollapsed = false
+            isPrimaryAutomaticallyCollapsed = false
+        } else {
+            isPrimaryCollapsed = true
+            isPrimaryAutomaticallyCollapsed = false
+        }
+    }
+
+    func expandedWidthRequirement(detailMinWidth: CGFloat) -> CGFloat {
+        minPrimaryWidth + detailMinWidth + Self.resizeHandleWidth
     }
 
     var preferredPrimaryWidth: CGFloat {
         clamped(primaryWidth ?? defaultPrimaryWidth)
+    }
+
+    var draggableMinimumPrimaryWidth: CGFloat {
+        guard let primaryCollapseThreshold else { return minPrimaryWidth }
+        return min(minPrimaryWidth, primaryCollapseThreshold)
     }
 
     mutating func rememberPrimaryWidth(_ width: CGFloat) {
@@ -832,6 +899,10 @@ struct HermesSplitLayout: Equatable {
 
     private func clamped(_ width: CGFloat) -> CGFloat {
         min(max(width, minPrimaryWidth), maxPrimaryWidth)
+    }
+
+    func clampedLivePrimaryWidth(_ width: CGFloat) -> CGFloat {
+        min(max(width, draggableMinimumPrimaryWidth), maxPrimaryWidth)
     }
 }
 
@@ -915,6 +986,11 @@ final class HermesTitleBarConfiguratorView: NSView {
             configureWindow()
         }
     }
+    var windowMaterial: AppWindowMaterialPreference = .solid {
+        didSet {
+            configureWindow()
+        }
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -923,17 +999,20 @@ final class HermesTitleBarConfiguratorView: NSView {
 
     private func configureWindow() {
         guard let window else { return }
+        let clampedOpacity = CGFloat(AppWindowOpacityPreference.clamped(windowOpacity))
+        let needsTransparentWindow = backgroundImageActive || windowMaterial == .translucent || clampedOpacity < 1.0
         window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = backgroundImageActive
-        window.alphaValue = CGFloat(AppWindowOpacityPreference.clamped(windowOpacity))
-        window.isOpaque = !backgroundImageActive && window.alphaValue >= 1.0
-        window.backgroundColor = backgroundImageActive || window.alphaValue < 1.0 ? .clear : .windowBackgroundColor
+        window.alphaValue = clampedOpacity
+        window.titlebarAppearsTransparent = backgroundImageActive || windowMaterial == .translucent
+        window.isOpaque = !needsTransparentWindow
+        window.backgroundColor = needsTransparentWindow ? .clear : .windowBackgroundColor
     }
 }
 
 struct HermesWindowTitleBarConfigurator: NSViewRepresentable {
     let backgroundImageActive: Bool
     let windowOpacity: Double
+    let windowMaterial: AppWindowMaterialPreference
 
     func makeNSView(context: Context) -> HermesTitleBarConfiguratorView {
         HermesTitleBarConfiguratorView(frame: .zero)
@@ -942,6 +1021,7 @@ struct HermesWindowTitleBarConfigurator: NSViewRepresentable {
     func updateNSView(_ nsView: HermesTitleBarConfiguratorView, context: Context) {
         nsView.backgroundImageActive = backgroundImageActive
         nsView.windowOpacity = windowOpacity
+        nsView.windowMaterial = windowMaterial
     }
 }
 
@@ -953,6 +1033,11 @@ struct HermesCollapsibleHSplitView<Primary: View, Detail: View>: View {
     let primary: Primary
     let detail: Detail
     private let collapseAnimation = Animation.snappy(duration: 0.16, extraBounce: 0)
+    private let resizeUpdateStep: CGFloat = 1
+    private let collapseResistanceDistance: CGFloat = 56
+    @State private var activeResizeStartingWidth: CGFloat?
+    @State private var activeResizeLiveWidth: CGFloat?
+    @State private var activeResizeTargetWidth: CGFloat?
 
     init(
         layout: Binding<HermesSplitLayout>,
@@ -971,282 +1056,210 @@ struct HermesCollapsibleHSplitView<Primary: View, Detail: View>: View {
     }
 
     var body: some View {
-        ZStack {
-            if layout.isPrimaryCollapsed && !keepsSplitViewWhenCollapsed {
-                detail
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .transition(usesTransition ? .opacity : .identity)
-            } else {
-                HermesPersistentHSplitView(layout: $layout, detailMinWidth: detailMinWidth) {
+        GeometryReader { geometry in
+            let availableWidth = geometry.size.width
+            let canShowPrimary = canShowPrimary(in: availableWidth)
+            let showsPrimary = !layout.isPrimaryCollapsed && canShowPrimary
+            let primaryWidth = activeResizeLiveWidth ?? resolvedPrimaryWidth(in: availableWidth)
+
+            HStack(spacing: 0) {
+                if showsPrimary || keepsSplitViewWhenCollapsed {
                     primary
-                } detail: {
-                    detail
+                        .frame(width: showsPrimary ? primaryWidth : 0)
+                        .opacity(showsPrimary ? 1 : 0)
+                        .allowsHitTesting(showsPrimary)
+                        .accessibilityHidden(!showsPrimary)
+                        .clipped()
+                        .transition(usesTransition ? .move(edge: .leading).combined(with: .opacity) : .identity)
                 }
-                .transition(usesTransition ? .opacity : .identity)
+
+                if showsPrimary {
+                    HermesSplitResizeHandle(
+                        isPrimedForCollapse: isResizePrimedForCollapse,
+                        onDragStart: {
+                            activeResizeStartingWidth = layout.primaryWidth ?? layout.preferredPrimaryWidth
+                            activeResizeTargetWidth = activeResizeStartingWidth
+                        },
+                        onDrag: { translation in
+                            let startWidth = activeResizeStartingWidth ?? layout.preferredPrimaryWidth
+                            let targetWidth = layout.clampedLivePrimaryWidth(startWidth + translation)
+                            let nextWidth = roundedResizeWidth(resistedLivePrimaryWidth(for: targetWidth))
+                            let currentWidth = activeResizeLiveWidth ?? startWidth
+                            activeResizeTargetWidth = targetWidth
+                            guard abs(currentWidth - nextWidth) >= resizeUpdateStep else { return }
+
+                            var transaction = Transaction()
+                            transaction.disablesAnimations = true
+                            withTransaction(transaction) {
+                                activeResizeLiveWidth = nextWidth
+                            }
+                        },
+                        onDragEnd: {
+                            let finalWidth = activeResizeTargetWidth ?? activeResizeLiveWidth ?? layout.primaryWidth ?? layout.preferredPrimaryWidth
+                            activeResizeStartingWidth = nil
+                            activeResizeLiveWidth = nil
+                            activeResizeTargetWidth = nil
+
+                            if shouldCollapseAfterDrag(finalWidth) {
+                                withAnimation(collapseAnimation) {
+                                    layout.isPrimaryCollapsed = true
+                                    layout.isPrimaryAutomaticallyCollapsed = false
+                                }
+                            } else {
+                                layout.rememberPrimaryWidth(finalWidth)
+                            }
+                        }
+                    )
+                    .transition(usesTransition ? .opacity : .identity)
+                }
+
+                detail
+                    .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .layoutPriority(1)
+                    .clipped()
             }
+            .frame(width: availableWidth, height: geometry.size.height, alignment: .leading)
+            .onAppear {
+                reconcileAutomaticCollapse(canShowPrimary: canShowPrimary)
+            }
+            .onChange(of: canShowPrimary) { _, newValue in
+                reconcileAutomaticCollapse(canShowPrimary: newValue)
+            }
+            .onChange(of: layout.isPrimaryCollapsed) { _, _ in
+                reconcileAutomaticCollapse(canShowPrimary: canShowPrimary)
+            }
+            .animation(usesTransition && activeResizeStartingWidth == nil ? collapseAnimation : nil, value: showsPrimary)
         }
         .clipped()
-        .animation(usesTransition ? collapseAnimation : nil, value: layout.isPrimaryCollapsed)
+    }
+
+    private func canShowPrimary(in availableWidth: CGFloat) -> Bool {
+        guard availableWidth.isFinite, availableWidth > 0 else { return false }
+        guard detailMinWidth > 0 else { return true }
+        return availableWidth >= layout.minPrimaryWidth + detailMinWidth + HermesSplitResizeHandle.width
+    }
+
+    private func resolvedPrimaryWidth(in availableWidth: CGFloat) -> CGFloat {
+        let availableBeforeDetail = max(
+            layout.minPrimaryWidth,
+            availableWidth - detailMinWidth - HermesSplitResizeHandle.width
+        )
+        return min(layout.preferredPrimaryWidth, availableBeforeDetail)
+    }
+
+    private func shouldCollapseAfterDrag(_ width: CGFloat) -> Bool {
+        guard let threshold = layout.primaryCollapseThreshold else { return false }
+        return width <= threshold
+    }
+
+    private var isResizePrimedForCollapse: Bool {
+        guard let activeResizeTargetWidth,
+              let threshold = layout.primaryCollapseThreshold else {
+            return false
+        }
+
+        return activeResizeTargetWidth <= threshold
+    }
+
+    private func resistedLivePrimaryWidth(for targetWidth: CGFloat) -> CGFloat {
+        guard layout.primaryCollapseThreshold != nil,
+              targetWidth < layout.minPrimaryWidth else {
+            return targetWidth
+        }
+
+        let overshoot = layout.minPrimaryWidth - targetWidth
+        let resistanceProgress = min(1, overshoot / collapseResistanceDistance)
+        let remainingProgress = 1 - resistanceProgress
+        let easedProgress = 1 - (remainingProgress * remainingProgress)
+        let visibleCompression = overshoot * (0.42 + (0.18 * easedProgress))
+        return max(layout.draggableMinimumPrimaryWidth, layout.minPrimaryWidth - visibleCompression)
+    }
+
+    private func reconcileAutomaticCollapse(canShowPrimary: Bool) {
+        let shouldAutoCollapse = !canShowPrimary
+        guard layout.isPrimaryAutomaticallyCollapsed != shouldAutoCollapse else { return }
+        layout.isPrimaryAutomaticallyCollapsed = shouldAutoCollapse
+    }
+
+    private func roundedResizeWidth(_ width: CGFloat) -> CGFloat {
+        (width / resizeUpdateStep).rounded() * resizeUpdateStep
     }
 }
 
-struct HermesPersistentHSplitView<Primary: View, Detail: View>: NSViewRepresentable {
-    @Binding var layout: HermesSplitLayout
-    let detailMinWidth: CGFloat
-    let primary: Primary
-    let detail: Detail
+private struct HermesSplitResizeHandle: View {
+    static let width = HermesSplitLayout.resizeHandleWidth
+    private static let hitWidth: CGFloat = 18
+    private static let activeVisibleWidth: CGFloat = 3
 
-    init(
-        layout: Binding<HermesSplitLayout>,
-        detailMinWidth: CGFloat,
-        @ViewBuilder primary: () -> Primary,
-        @ViewBuilder detail: () -> Detail
-    ) {
-        self._layout = layout
-        self.detailMinWidth = detailMinWidth
-        self.primary = primary()
-        self.detail = detail()
-    }
+    let isPrimedForCollapse: Bool
+    let onDragStart: () -> Void
+    let onDrag: (CGFloat) -> Void
+    let onDragEnd: () -> Void
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
+    @State private var isHovering = false
+    @State private var isDragging = false
 
-    func makeNSView(context: Context) -> NSSplitView {
-        let splitView = NSSplitView()
-        splitView.isVertical = true
-        splitView.dividerStyle = .thin
-        splitView.delegate = context.coordinator
+    var body: some View {
+        let hitOutset = max(0, (Self.hitWidth - Self.width) / 2)
 
-        let primaryHost = NSHostingView(rootView: primary)
-        primaryHost.translatesAutoresizingMaskIntoConstraints = false
-        primaryHost.clipsToBounds = true
-
-        let detailHost = NSHostingView(rootView: detail)
-        detailHost.translatesAutoresizingMaskIntoConstraints = false
-        detailHost.clipsToBounds = true
-
-        splitView.addArrangedSubview(primaryHost)
-        splitView.addArrangedSubview(detailHost)
-
-        context.coordinator.primaryHost = primaryHost
-        context.coordinator.detailHost = detailHost
-        context.coordinator.layout = $layout
-        context.coordinator.detailMinWidth = detailMinWidth
-
-        context.coordinator.applyLayout(in: splitView)
-        return splitView
-    }
-
-    func updateNSView(_ splitView: NSSplitView, context: Context) {
-        context.coordinator.primaryHost?.rootView = primary
-        context.coordinator.detailHost?.rootView = detail
-        context.coordinator.layout = $layout
-        context.coordinator.detailMinWidth = detailMinWidth
-        context.coordinator.applyLayout(in: splitView)
-    }
-
-    @MainActor
-    final class Coordinator: NSObject, NSSplitViewDelegate {
-        var primaryHost: NSHostingView<Primary>?
-        var detailHost: NSHostingView<Detail>?
-        var layout: Binding<HermesSplitLayout>?
-        var detailMinWidth: CGFloat = 420
-        private var isRestoringDivider = false
-        private var hasRestoredDivider = false
-        private var autoConstrainedPrimaryWidth: CGFloat?
-
-        func applyLayout(in splitView: NSSplitView) {
-            guard splitView.subviews.count > 1, let layout else { return }
-
-            if layout.wrappedValue.isPrimaryCollapsed {
-                collapsePrimary(in: splitView)
-                hasRestoredDivider = true
-                autoConstrainedPrimaryWidth = nil
-                return
-            }
-
-            if primaryHost?.isHidden == true {
-                isRestoringDivider = true
-                primaryHost?.isHidden = false
-                splitView.adjustSubviews()
-                splitView.needsDisplay = true
-                isRestoringDivider = false
-            }
-
-            restoreDividerPosition(in: splitView)
+        ZStack {
+            Capsule(style: .continuous)
+                .fill(handleFill)
+                .frame(width: isDragging || isHovering ? Self.activeVisibleWidth : Self.width)
         }
-
-        private func collapsePrimary(in splitView: NSSplitView) {
-            guard splitView.subviews.count > 1 else { return }
-
-            isRestoringDivider = true
-            primaryHost?.isHidden = true
-            splitView.setPosition(0, ofDividerAt: 0)
-            splitView.adjustSubviews()
-            splitView.needsDisplay = true
-            isRestoringDivider = false
-        }
-
-        func restoreDividerPosition(in splitView: NSSplitView) {
-            guard splitView.subviews.count > 1, let layout else { return }
-
-            if splitView.bounds.width <= 0 {
-                DispatchQueue.main.async { [weak self, weak splitView] in
-                    guard let self, let splitView else { return }
-                    self.restoreDividerPosition(in: splitView)
-                }
-                return
+            .frame(minWidth: Self.width, idealWidth: Self.width, maxWidth: Self.width, maxHeight: .infinity)
+            .padding(.horizontal, hitOutset)
+            .contentShape(Rectangle())
+            .background {
+                HermesResizeCursorRegion()
             }
-
-            let restoredWidth = constrainedPrimaryWidth(
-                layout.wrappedValue.preferredPrimaryWidth,
-                in: splitView
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        if !isDragging {
+                            isDragging = true
+                            onDragStart()
+                        }
+                        onDrag(value.translation.width)
+                    }
+                    .onEnded { _ in
+                        isDragging = false
+                        onDragEnd()
+                    }
             )
-            let currentWidth = splitView.subviews[0].frame.width
-            guard abs(currentWidth - restoredWidth) > 1 else {
-                hasRestoredDivider = true
-                return
+            .onHover { hovering in
+                guard hovering != isHovering else { return }
+                isHovering = hovering
             }
+            .padding(.horizontal, -hitOutset)
+            .animation(.easeOut(duration: 0.12), value: isHovering)
+            .animation(.easeOut(duration: 0.12), value: isDragging)
+            .animation(.easeOut(duration: 0.12), value: isPrimedForCollapse)
+            .accessibilityLabel(Text("Resize pane"))
+            .accessibilityHint(Text("Drag horizontally to resize this column"))
+    }
 
-            isRestoringDivider = true
-            splitView.setPosition(restoredWidth, ofDividerAt: 0)
-            splitView.adjustSubviews()
-            isRestoringDivider = false
-            hasRestoredDivider = true
+    private var handleFill: Color {
+        if isPrimedForCollapse {
+            return Color.accentColor.opacity(isDragging ? 0.38 : 0.26)
         }
 
-        func splitViewDidResizeSubviews(_ notification: Notification) {
-            guard !isRestoringDivider,
-                  hasRestoredDivider,
-                  let splitView = notification.object as? NSSplitView,
-                  let layout,
-                  !layout.wrappedValue.isPrimaryCollapsed,
-                  !splitView.subviews.isEmpty else {
-                return
-            }
+        return Color.secondary.opacity(isDragging ? 0.28 : (isHovering ? 0.18 : 0.08))
+    }
+}
 
-            if reconcilePrimaryWidthForAvailableSpace(in: splitView) {
-                return
-            }
+private struct HermesResizeCursorRegion: NSViewRepresentable {
+    func makeNSView(context: Context) -> ResizeCursorView {
+        ResizeCursorView()
+    }
 
-            let width = splitView.subviews[0].frame.width
-            guard width.isFinite, width > 0 else { return }
+    func updateNSView(_ nsView: ResizeCursorView, context: Context) {
+        nsView.window?.invalidateCursorRects(for: nsView)
+    }
 
-            var updatedLayout = layout.wrappedValue
-            updatedLayout.rememberPrimaryWidth(width)
-            if updatedLayout != layout.wrappedValue {
-                layout.wrappedValue = updatedLayout
-            }
-            autoConstrainedPrimaryWidth = nil
-        }
-
-        func splitView(
-            _ splitView: NSSplitView,
-            constrainMinCoordinate proposedMinimumPosition: CGFloat,
-            ofSubviewAt dividerIndex: Int
-        ) -> CGFloat {
-            if layout?.wrappedValue.isPrimaryCollapsed == true {
-                return 0
-            }
-            return effectivePrimaryMinimum(in: splitView) ?? proposedMinimumPosition
-        }
-
-        func splitView(
-            _ splitView: NSSplitView,
-            constrainMaxCoordinate proposedMaximumPosition: CGFloat,
-            ofSubviewAt dividerIndex: Int
-        ) -> CGFloat {
-            guard let upperBound = primaryUpperBound(in: splitView) else {
-                return proposedMaximumPosition
-            }
-            let lowerBound = layout?.wrappedValue.isPrimaryCollapsed == true
-                ? 0
-                : effectivePrimaryMinimum(in: splitView) ?? 0
-            return max(lowerBound, upperBound)
-        }
-
-        func splitView(_ splitView: NSSplitView, shouldAdjustSizeOfSubview view: NSView) -> Bool {
-            view === detailHost
-        }
-
-        func splitView(_ splitView: NSSplitView, shouldHideDividerAt dividerIndex: Int) -> Bool {
-            layout?.wrappedValue.isPrimaryCollapsed == true
-        }
-
-        private func constrainedPrimaryWidth(_ width: CGFloat, in splitView: NSSplitView) -> CGFloat {
-            guard let lowerBound = effectivePrimaryMinimum(in: splitView),
-                  let upperBound = primaryUpperBound(in: splitView) else {
-                return width
-            }
-
-            let maxWidth = max(lowerBound, upperBound)
-            return min(max(width, lowerBound), maxWidth)
-        }
-
-        private func reconcilePrimaryWidthForAvailableSpace(in splitView: NSSplitView) -> Bool {
-            guard splitView.subviews.count > 1, let layout else { return false }
-
-            let currentPrimaryWidth = splitView.subviews[0].frame.width
-            let currentDetailWidth = splitView.subviews[1].frame.width
-            let shouldProtectDetail = currentDetailWidth + 1 < detailMinWidth
-            let minimumPrimaryWidth = layout.wrappedValue.minPrimaryWidth
-
-            if let autoConstrainedPrimaryWidth,
-               !shouldProtectDetail,
-               abs(currentPrimaryWidth - autoConstrainedPrimaryWidth) > 2 {
-                self.autoConstrainedPrimaryWidth = nil
-                return false
-            }
-
-            let preferredPrimaryWidth = constrainedPrimaryWidth(
-                layout.wrappedValue.preferredPrimaryWidth,
-                in: splitView
-            )
-
-            let shouldRestorePrimary = autoConstrainedPrimaryWidth != nil &&
-                currentPrimaryWidth + 1 < preferredPrimaryWidth
-
-            guard shouldProtectDetail || shouldRestorePrimary else {
-                return false
-            }
-
-            let targetPrimaryWidth = shouldProtectDetail
-                ? max(minimumPrimaryWidth, min(currentPrimaryWidth, preferredPrimaryWidth))
-                : preferredPrimaryWidth
-
-            guard abs(currentPrimaryWidth - targetPrimaryWidth) > 1 else {
-                if shouldProtectDetail {
-                    autoConstrainedPrimaryWidth = currentPrimaryWidth
-                    return true
-                }
-                return false
-            }
-
-            isRestoringDivider = true
-            splitView.setPosition(targetPrimaryWidth, ofDividerAt: 0)
-            splitView.adjustSubviews()
-            isRestoringDivider = false
-
-            if abs(targetPrimaryWidth - layout.wrappedValue.preferredPrimaryWidth) < 1 {
-                autoConstrainedPrimaryWidth = nil
-            } else {
-                autoConstrainedPrimaryWidth = targetPrimaryWidth
-            }
-
-            return true
-        }
-
-        private func effectivePrimaryMinimum(in splitView: NSSplitView) -> CGFloat? {
-            guard let layout else { return nil }
-            return layout.wrappedValue.minPrimaryWidth
-        }
-
-        private func primaryUpperBound(in splitView: NSSplitView) -> CGFloat? {
-            guard let layout else { return nil }
-            let availableBeforeDetail = splitView.bounds.width - detailMinWidth - splitView.dividerThickness
-            let hardLowerBound = layout.wrappedValue.minPrimaryWidth
-            return min(layout.wrappedValue.maxPrimaryWidth, max(hardLowerBound, availableBeforeDetail))
+    final class ResizeCursorView: NSView {
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .resizeLeftRight)
         }
     }
 }

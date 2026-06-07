@@ -12,7 +12,7 @@ struct FilesView: View {
     @State private var showRemoveBookmarkAlert = false
 
     var body: some View {
-        HermesCollapsibleHSplitView(layout: $splitLayout, detailMinWidth: 460) {
+        HermesCollapsibleHSplitView(layout: $splitLayout, detailMinWidth: HermesSplitMetrics.WorkbenchDetail.editorMinWidth) {
             VStack(alignment: .leading, spacing: 18) {
                 HermesPageHeader(
                     title: "Files",
@@ -27,7 +27,10 @@ struct FilesView: View {
             .padding(.vertical, 20)
         } detail: {
             editorPane
-                .hermesSplitDetailColumn(minWidth: 460, idealWidth: 640)
+                .hermesSplitDetailColumn(
+                    minWidth: HermesSplitMetrics.WorkbenchDetail.editorMinWidth,
+                    idealWidth: HermesSplitMetrics.WorkbenchDetail.editorIdealWidth
+                )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .task(id: selectedFileLoadTaskID) {

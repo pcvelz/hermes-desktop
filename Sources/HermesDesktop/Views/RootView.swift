@@ -1,63 +1,50 @@
 import AppKit
 import SwiftUI
 
-private let workbenchPrimaryColumnWidth: CGFloat = 460
-
 struct RootView: View {
     @Environment(\.openURL) private var openURL
     @EnvironmentObject private var appState: AppState
     @SceneStorage("RootView.isWorkspaceSidebarCollapsed") private var isWorkspaceSidebarCollapsed = false
     @State private var workspaceSplitLayout = HermesSplitLayout(
-        minPrimaryWidth: 160,
-        defaultPrimaryWidth: 188,
-        maxPrimaryWidth: 220
+        minPrimaryWidth: HermesSplitMetrics.WorkspaceSidebar.minWidth,
+        defaultPrimaryWidth: HermesSplitMetrics.WorkspaceSidebar.defaultWidth,
+        maxPrimaryWidth: HermesSplitMetrics.WorkspaceSidebar.maxWidth,
+        primaryCollapseThreshold: HermesSplitMetrics.WorkspaceSidebar.collapseThreshold
     )
-    @State private var sessionsSplitLayout = HermesSplitLayout(
-        minPrimaryWidth: workbenchPrimaryColumnWidth,
-        defaultPrimaryWidth: workbenchPrimaryColumnWidth
-    )
-    @State private var cronJobsSplitLayout = HermesSplitLayout(
-        minPrimaryWidth: workbenchPrimaryColumnWidth,
-        defaultPrimaryWidth: workbenchPrimaryColumnWidth
-    )
-    @State private var workflowsSplitLayout = HermesSplitLayout(
-        minPrimaryWidth: workbenchPrimaryColumnWidth,
-        defaultPrimaryWidth: workbenchPrimaryColumnWidth
-    )
-    @State private var kanbanSplitLayout = HermesSplitLayout(
-        minPrimaryWidth: workbenchPrimaryColumnWidth,
-        defaultPrimaryWidth: workbenchPrimaryColumnWidth
-    )
-    @State private var filesSplitLayout = HermesSplitLayout(minPrimaryWidth: 300, defaultPrimaryWidth: 360)
-    @State private var skillsSplitLayout = HermesSplitLayout(
-        minPrimaryWidth: workbenchPrimaryColumnWidth,
-        defaultPrimaryWidth: workbenchPrimaryColumnWidth
-    )
+    @State private var sessionsSplitLayout = HermesSplitMetrics.standardWorkbenchBrowserLayout
+    @State private var cronJobsSplitLayout = HermesSplitMetrics.standardWorkbenchBrowserLayout
+    @State private var workflowsSplitLayout = HermesSplitMetrics.standardWorkbenchBrowserLayout
+    @State private var kanbanSplitLayout = HermesSplitMetrics.standardWorkbenchBrowserLayout
+    @State private var filesSplitLayout = HermesSplitMetrics.standardWorkbenchBrowserLayout
+    @State private var skillsSplitLayout = HermesSplitMetrics.standardWorkbenchBrowserLayout
 
     var body: some View {
         rootContent
             .toolbar {
                 ToolbarItemGroup(placement: .navigation) {
                     HermesToolbarControlCluster {
-                        HermesCollapseToolbarButton(
-                            systemImage: "sidebar.left",
-                            isActive: isWorkspaceSidebarCollapsed,
-                            isEnabled: isWorkspaceSidebarCollapseEnabled,
-                            help: workspaceSidebarCollapseHelp
-                        ) {
-                            guard isWorkspaceSidebarCollapseEnabled else { return }
-                            workspaceSidebarSplitLayout.wrappedValue.isPrimaryCollapsed.toggle()
+                        if !isWorkspaceSidebarAutomaticallyCollapsed {
+                            HermesCollapseToolbarButton(
+                                systemImage: "sidebar.left",
+                                isActive: isWorkspaceSidebarCollapsed,
+                                isEnabled: isWorkspaceSidebarCollapseEnabled,
+                                help: workspaceSidebarCollapseHelp
+                            ) {
+                                guard isWorkspaceSidebarCollapseEnabled else { return }
+                                workspaceSidebarSplitLayout.wrappedValue.togglePrimaryCollapsed()
+                            }
                         }
 
-                        HermesCollapseToolbarButton(
-                            systemImage: "rectangle.leftthird.inset.filled",
-                            isActive: currentWorkbenchPrimaryColumnCollapsed,
-                            isEnabled: currentWorkbenchPrimaryColumnLayout != nil,
-                            help: currentWorkbenchPrimaryColumnCollapsed
-                                ? L10n.string("Show Section Browser")
-                                : L10n.string("Hide Section Browser")
-                        ) {
-                            toggleCurrentWorkbenchPrimaryColumn()
+                        if currentWorkbenchPrimaryColumnLayout != nil,
+                           !currentWorkbenchPrimaryColumnAutomaticallyCollapsed {
+                            HermesCollapseToolbarButton(
+                                systemImage: "rectangle.leftthird.inset.filled",
+                                isActive: currentWorkbenchPrimaryColumnUserCollapsed,
+                                isEnabled: currentWorkbenchPrimaryColumnLayout != nil,
+                                help: currentWorkbenchPrimaryColumnCollapseHelp
+                            ) {
+                                toggleCurrentWorkbenchPrimaryColumn()
+                            }
                         }
                     }
                 }
@@ -126,19 +113,12 @@ struct RootView: View {
             }
             .onAppear {
                 appState.connectionStore.appAppearance.applyToApplication()
-                ensureWorkspaceSidebarVisibleForCurrentSection()
             }
             .onChange(of: appState.connectionStore.appAppearance) { _, newValue in
                 newValue.applyToApplication()
             }
-            .onChange(of: appState.selectedSection) { _, _ in
-                ensureWorkspaceSidebarVisibleForCurrentSection()
-            }
             .onChange(of: appState.connectionStore.visibleSidebarSections) { _, _ in
                 ensureSelectedSectionAvailable()
-            }
-            .onChange(of: appState.sessionTUITerminal?.id) { _, _ in
-                ensureWorkspaceSidebarVisibleForCurrentSection()
             }
     }
 
@@ -147,7 +127,11 @@ struct RootView: View {
         ZStack {
             backgroundImageView
 
-            HermesCollapsibleHSplitView(layout: workspaceSidebarSplitLayout, detailMinWidth: 0) {
+            HermesCollapsibleHSplitView(
+                layout: workspaceSidebarSplitLayout,
+                detailMinWidth: workspaceSidebarDetailMinWidth,
+                keepsSplitViewWhenCollapsed: true
+            ) {
                 workspaceSidebar
             } detail: {
                 detailView
@@ -164,16 +148,46 @@ struct RootView: View {
         if let backgroundImageURL = appState.connectionStore.backgroundImageURL,
            let nsImage = NSImage(contentsOf: backgroundImageURL) {
             GeometryReader { geometry in
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: geometry.size.width, height: geometry.size.height)
-                    .clipped()
+                ZStack {
+                    windowMaterialBackground
+
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .aspectRatio(contentMode: backgroundImageContentMode)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
+                        .blur(radius: appState.connectionStore.backgroundImageBlur)
+                }
             }
             .ignoresSafeArea()
             .overlay(Color.black.opacity(0.28))
         } else {
+            windowMaterialBackground
+        }
+    }
+
+    private var backgroundImageContentMode: ContentMode {
+        switch appState.connectionStore.backgroundImageFit {
+        case .fill:
+            return .fill
+        case .fit:
+            return .fit
+        }
+    }
+
+    @ViewBuilder
+    private var windowMaterialBackground: some View {
+        switch appState.connectionStore.windowMaterial {
+        case .solid:
             HermesTheme.appBackground
+                .ignoresSafeArea()
+        case .nativeWindow:
+            Rectangle()
+                .fill(.windowBackground)
+                .ignoresSafeArea()
+        case .translucent:
+            Rectangle()
+                .fill(.regularMaterial)
                 .ignoresSafeArea()
         }
     }
@@ -200,7 +214,11 @@ struct RootView: View {
                 Rectangle().fill(.regularMaterial)
             }
         }
-        .frame(minWidth: 160, idealWidth: 188, maxWidth: 220)
+        .frame(
+            minWidth: HermesSplitMetrics.WorkspaceSidebar.minWidth,
+            idealWidth: HermesSplitMetrics.WorkspaceSidebar.defaultWidth,
+            maxWidth: HermesSplitMetrics.WorkspaceSidebar.maxWidth
+        )
     }
 
     private var workspaceSidebarSplitLayout: Binding<HermesSplitLayout> {
@@ -215,29 +233,17 @@ struct RootView: View {
     }
 
     private var isWorkspaceSidebarCollapseEnabled: Bool {
-        appState.selectedSection != .terminal && !isSessionTUIVisible
+        true
+    }
+
+    private var isWorkspaceSidebarAutomaticallyCollapsed: Bool {
+        workspaceSidebarSplitLayout.wrappedValue.isPrimaryAutomaticallyCollapsed
     }
 
     private var workspaceSidebarCollapseHelp: String {
-        if !isWorkspaceSidebarCollapseEnabled {
-            if isSessionTUIVisible {
-                return L10n.string("Workspace Sidebar is locked while Chat TUI is active")
-            }
-            return L10n.string("Workspace Sidebar is always visible in Terminal")
-        }
-
         return isWorkspaceSidebarCollapsed
             ? L10n.string("Show Workspace Sidebar")
             : L10n.string("Hide Workspace Sidebar")
-    }
-
-    private var isSessionTUIVisible: Bool {
-        guard appState.selectedSection == .sessions,
-              let terminal = appState.sessionTUITerminal else {
-            return false
-        }
-
-        return terminal.terminalSession.exitCode == nil
     }
 
     private var currentWorkbenchPrimaryColumnLayout: Binding<HermesSplitLayout>? {
@@ -261,18 +267,51 @@ struct RootView: View {
         }
     }
 
-    private var currentWorkbenchPrimaryColumnCollapsed: Bool {
+    private var currentWorkbenchPrimaryColumnUserCollapsed: Bool {
         currentWorkbenchPrimaryColumnLayout?.wrappedValue.isPrimaryCollapsed ?? false
+    }
+
+    private var currentWorkbenchPrimaryColumnAutomaticallyCollapsed: Bool {
+        currentWorkbenchPrimaryColumnLayout?.wrappedValue.isPrimaryAutomaticallyCollapsed ?? false
+    }
+
+    private var currentWorkbenchPrimaryColumnCollapseHelp: String {
+        return currentWorkbenchPrimaryColumnUserCollapsed
+            ? L10n.string("Show Section Browser")
+            : L10n.string("Hide Section Browser")
     }
 
     private func toggleCurrentWorkbenchPrimaryColumn() {
         guard let layout = currentWorkbenchPrimaryColumnLayout else { return }
-        layout.wrappedValue.isPrimaryCollapsed.toggle()
+        layout.wrappedValue.togglePrimaryCollapsed()
     }
 
-    private func ensureWorkspaceSidebarVisibleForCurrentSection() {
-        guard !isWorkspaceSidebarCollapseEnabled, isWorkspaceSidebarCollapsed else { return }
-        workspaceSidebarSplitLayout.wrappedValue.isPrimaryCollapsed = false
+    private var workspaceSidebarDetailMinWidth: CGFloat {
+        guard let layout = currentWorkbenchPrimaryColumnLayout?.wrappedValue,
+              !layout.isPrimaryEffectivelyCollapsed,
+              let detailMinWidth = currentWorkbenchDetailMinWidth else {
+            return HermesSplitMetrics.WorkspaceSidebar.detailFallbackMinWidth
+        }
+
+        return max(
+            HermesSplitMetrics.WorkspaceSidebar.detailFallbackMinWidth,
+            layout.expandedWidthRequirement(detailMinWidth: detailMinWidth)
+        )
+    }
+
+    private var currentWorkbenchDetailMinWidth: CGFloat? {
+        guard appState.activeConnection != nil else { return nil }
+
+        switch appState.selectedSection {
+        case .sessions:
+            return HermesSplitMetrics.WorkbenchDetail.standardMinWidth
+        case .cronjobs, .workflows, .files:
+            return HermesSplitMetrics.WorkbenchDetail.editorMinWidth
+        case .kanban, .skills:
+            return HermesSplitMetrics.WorkbenchDetail.standardMinWidth
+        case .connections, .usage, .terminal:
+            return nil
+        }
     }
 
     private func ensureSelectedSectionAvailable() {

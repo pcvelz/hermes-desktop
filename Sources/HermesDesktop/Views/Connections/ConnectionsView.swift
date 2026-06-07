@@ -210,6 +210,17 @@ struct ConnectionsView: View {
                     }
                 }
 
+                SettingsControlRow(title: "Window Material", subtitle: "Choose the app background surface.") {
+                    Picker("", selection: windowMaterialBinding) {
+                        ForEach(AppWindowMaterialPreference.allCases) { material in
+                            Text(L10n.string(material.title))
+                                .tag(material)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 340)
+                }
+
                 Divider()
 
                 SidebarCustomizationPanel(
@@ -241,6 +252,8 @@ struct ConnectionsView: View {
                     imageURL: appState.connectionStore.backgroundImageURL,
                     originalFileName: appState.connectionStore.backgroundImageOriginalFileName,
                     isMissing: appState.connectionStore.isBackgroundImageMissing,
+                    imageFit: backgroundImageFitBinding,
+                    imageBlur: backgroundImageBlurBinding,
                     chooseImage: chooseBackgroundImage,
                     clearImage: {
                         appState.connectionStore.clearBackgroundImage()
@@ -552,6 +565,30 @@ struct ConnectionsView: View {
         }
     }
 
+    private var windowMaterialBinding: Binding<AppWindowMaterialPreference> {
+        Binding {
+            appState.connectionStore.windowMaterial
+        } set: { newValue in
+            appState.connectionStore.windowMaterial = newValue
+        }
+    }
+
+    private var backgroundImageFitBinding: Binding<AppBackgroundImageFitPreference> {
+        Binding {
+            appState.connectionStore.backgroundImageFit
+        } set: { newValue in
+            appState.connectionStore.backgroundImageFit = newValue
+        }
+    }
+
+    private var backgroundImageBlurBinding: Binding<Double> {
+        Binding {
+            appState.connectionStore.backgroundImageBlur
+        } set: { newValue in
+            appState.connectionStore.backgroundImageBlur = newValue
+        }
+    }
+
     private func chooseBackgroundImage() {
         let panel = NSOpenPanel()
         panel.title = L10n.string("Choose Image…")
@@ -782,6 +819,8 @@ private struct BackgroundImagePreferencePanel: View {
     let imageURL: URL?
     let originalFileName: String?
     let isMissing: Bool
+    @Binding var imageFit: AppBackgroundImageFitPreference
+    @Binding var imageBlur: Double
     let chooseImage: () -> Void
     let clearImage: () -> Void
 
@@ -841,6 +880,48 @@ private struct BackgroundImagePreferencePanel: View {
                     }
                 }
             }
+
+            HermesInsetSurface {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text(L10n.string("Image Fit"))
+                            .font(.headline)
+
+                        Spacer()
+
+                        Picker("", selection: $imageFit) {
+                            ForEach(AppBackgroundImageFitPreference.allCases) { fit in
+                                Text(L10n.string(fit.title))
+                                    .tag(fit)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 150)
+                    }
+
+                    HStack(spacing: 10) {
+                        Text(L10n.string("Blur"))
+                            .font(.headline)
+
+                        Slider(
+                            value: Binding(
+                                get: { imageBlur },
+                                set: { imageBlur = AppBackgroundImageBlurPreference.clamped($0) }
+                            ),
+                            in: AppBackgroundImageBlurPreference.minimumValue...AppBackgroundImageBlurPreference.maximumValue,
+                            step: 1
+                        )
+                        .frame(maxWidth: 180)
+
+                        Text(String(format: "%.0f", imageBlur))
+                            .font(.system(.caption, design: .monospaced).weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 28, alignment: .trailing)
+                    }
+                }
+            }
+            .disabled(imageURL == nil)
+            .opacity(imageURL == nil ? 0.58 : 1)
         }
     }
 

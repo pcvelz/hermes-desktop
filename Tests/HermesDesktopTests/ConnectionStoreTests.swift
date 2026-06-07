@@ -47,6 +47,9 @@ struct ConnectionStoreTests {
 
         #expect(store.lastConnectionID == nil)
         #expect(store.terminalTheme == .defaultValue)
+        #expect(store.windowMaterial == .solid)
+        #expect(store.backgroundImageFit == .fill)
+        #expect(store.backgroundImageBlur == 0)
         #expect(store.automaticallyChecksForUpdates)
         #expect(store.workspaceFileBookmarks.isEmpty)
         #expect(store.pinnedSessions.isEmpty)
