@@ -9,6 +9,7 @@
 /dist
 /docs/*
 !/docs/distribution.md
+!/docs/CONTROL_API.md
 !/docs/releases/
 !/docs/releases/*.md
 /private/

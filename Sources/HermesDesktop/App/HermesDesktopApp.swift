@@ -18,6 +18,18 @@ struct HermesDesktopApp: App {
                         windowMaterial: appState.connectionStore.windowMaterial
                     )
                 )
+                .onAppear {
+                    // Provide the delegate with the fully-initialised AppState so the
+                    // control server can reference the shared stores.  We use onAppear
+                    // rather than applicationDidFinishLaunching because @StateObject is
+                    // only guaranteed to be alive once the first view renders.
+                    appDelegate.appState = appState
+                    spawnControlServer(
+                        connectionStore: appState.connectionStore,
+                        sshTransport: appState.sshTransport,
+                        terminalWorkspace: appState.terminalWorkspace
+                    )
+                }
         }
         .defaultSize(width: 1360, height: 860)
         .commands {

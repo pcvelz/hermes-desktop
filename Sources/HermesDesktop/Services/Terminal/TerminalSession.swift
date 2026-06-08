@@ -133,6 +133,12 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
         currentDirectory = nil
     }
 
+    /// Send raw input bytes to the running PTY (used by the control server's
+    /// POST /terminal/session/{id}/write endpoint).
+    func sendInput(_ text: String) {
+        viewHost.send(text: text)
+    }
+
     // MARK: - Local environment builder
 
     private static func buildLocalEnvironment(
