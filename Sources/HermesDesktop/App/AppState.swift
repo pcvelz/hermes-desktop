@@ -148,6 +148,12 @@ final class AppState: ObservableObject {
             }
             .store(in: &cancellables)
 
+        connectionStore.$terminalTheme
+            .sink { [weak self] theme in
+                self?.terminalWorkspace.terminalTheme = theme
+            }
+            .store(in: &cancellables)
+
         connectionStore.$persistenceError
             .compactMap { $0 }
             .sink { [weak self] message in
@@ -1147,6 +1153,7 @@ final class AppState: ObservableObject {
             sessionID: sessionID,
             connection: updatedProfile,
             sshTransport: sshTransport,
+            terminalTheme: connectionStore.terminalTheme,
             workflowLaunchDiagnostics: workflowLaunchDiagnostics
         )
         sessionsError = nil
@@ -1512,6 +1519,7 @@ final class AppState: ObservableObject {
             sessionID: nil,
             connection: profile.updated(),
             sshTransport: sshTransport,
+            terminalTheme: connectionStore.terminalTheme,
             workflowLaunchDiagnostics: workflowLaunchDiagnostics,
             startupInput: invocation.initialInput,
             workflowLaunchDiagnosticsContext: workflowLaunchDiagnosticsContext

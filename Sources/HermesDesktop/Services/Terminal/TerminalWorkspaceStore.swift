@@ -4,6 +4,7 @@ import Foundation
 final class TerminalWorkspaceStore: ObservableObject {
     @Published private(set) var tabs: [TerminalTabModel] = []
     @Published var selectedTabID: UUID?
+    var terminalTheme: TerminalThemePreference = .defaultValue
 
     private let sshTransport: SSHTransport
     private let workflowLaunchDiagnostics: WorkflowLaunchDiagnostics
@@ -62,6 +63,7 @@ final class TerminalWorkspaceStore: ObservableObject {
         let session = TerminalSession(
             connection: connection,
             sshTransport: sshTransport,
+            terminalTheme: terminalTheme,
             startupCommandLine: startupCommandLine,
             startupInput: startupInput,
             workflowLaunchDiagnostics: workflowLaunchDiagnostics,

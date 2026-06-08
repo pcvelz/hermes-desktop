@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 @MainActor
@@ -21,6 +22,7 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
     init(
         connection: ConnectionProfile,
         sshTransport: SSHTransport,
+        terminalTheme: TerminalThemePreference = .defaultValue,
         startupCommandLine: String? = nil,
         startupInput: String? = nil,
         workflowLaunchDiagnostics: WorkflowLaunchDiagnostics,
@@ -36,7 +38,8 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
             self.sshArguments = []
             self.localShellEnvironment = TerminalSession.buildLocalEnvironment(
                 hermesHomeExpression: connection.remoteHermesHomeShellExpression,
-                searchPathExpression: connection.remoteHermesSearchPathShellExpression
+                searchPathExpression: connection.remoteHermesSearchPathShellExpression,
+                terminalTheme: terminalTheme
             )
         } else {
             self.sshArguments = sshTransport.shellArguments(
@@ -169,7 +172,8 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
 
     private static func buildLocalEnvironment(
         hermesHomeExpression: String,
-        searchPathExpression: String
+        searchPathExpression: String,
+        terminalTheme: TerminalThemePreference
     ) -> [String] {
         var env = ProcessInfo.processInfo.environment
 
@@ -189,6 +193,24 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
         env["HF_HUB_OFFLINE"] = "1"
         env["TRANSFORMERS_OFFLINE"] = "1"
 
+        let bgColor = terminalTheme.resolvedAppearance.backgroundColor
+        let hexBg = bgColor.hexString
+        env["HERMES_TUI_BACKGROUND"] = hexBg
+
+        let luminance = Self.relativeLuminance(red: bgColor.red, green: bgColor.green, blue: bgColor.blue)
+        if luminance > 0.5 {
+            env["HERMES_TUI_LIGHT"] = "1"
+        } else {
+            env.removeValue(forKey: "HERMES_TUI_LIGHT")
+        }
+
         return env.map { "\($0.key)=\($0.value)" }
+    }
+
+    private static func relativeLuminance(red: Double, green: Double, blue: Double) -> Double {
+        func linearise(_ c: Double) -> Double {
+            c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * linearise(red) + 0.7152 * linearise(green) + 0.0722 * linearise(blue)
     }
 }

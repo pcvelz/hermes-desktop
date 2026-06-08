@@ -17,6 +17,7 @@ final class SessionTUITerminal: ObservableObject, Identifiable {
         sessionID: String?,
         connection: ConnectionProfile,
         sshTransport: SSHTransport,
+        terminalTheme: TerminalThemePreference = .defaultValue,
         workflowLaunchDiagnostics: WorkflowLaunchDiagnostics,
         startupInput: String? = nil,
         workflowLaunchDiagnosticsContext: WorkflowLaunchDiagnosticsContext? = nil
@@ -27,6 +28,7 @@ final class SessionTUITerminal: ObservableObject, Identifiable {
         self.terminalSession = TerminalSession(
             connection: connection,
             sshTransport: sshTransport,
+            terminalTheme: terminalTheme,
             startupCommandLine: invocation.startupCommandLine,
             startupInput: startupInput,
             workflowLaunchDiagnostics: workflowLaunchDiagnostics,
