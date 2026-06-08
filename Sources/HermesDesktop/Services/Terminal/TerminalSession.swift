@@ -6,6 +6,7 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
     let sshArguments: [String]
     let localShellEnvironment: [String]
     let startupInput: String?
+    let startupCommandLine: String?
     let workflowLaunchDiagnosticsContext: WorkflowLaunchDiagnosticsContext?
     private let workflowLaunchDiagnostics: WorkflowLaunchDiagnostics
     private let viewHost = TerminalViewHost()
@@ -27,6 +28,7 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
     ) {
         self.connection = connection
         self.startupInput = startupInput
+        self.startupCommandLine = startupCommandLine
         self.workflowLaunchDiagnostics = workflowLaunchDiagnostics
         self.workflowLaunchDiagnosticsContext = workflowLaunchDiagnosticsContext
 
@@ -34,8 +36,7 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
             self.sshArguments = []
             self.localShellEnvironment = TerminalSession.buildLocalEnvironment(
                 hermesHomeExpression: connection.remoteHermesHomeShellExpression,
-                searchPathExpression: connection.remoteHermesSearchPathShellExpression,
-                startupCommandLine: startupCommandLine
+                searchPathExpression: connection.remoteHermesSearchPathShellExpression
             )
         } else {
             self.sshArguments = sshTransport.shellArguments(
@@ -130,7 +131,8 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
             workflowLaunchDiagnostics: workflowLaunchDiagnostics,
             workflowLaunchDiagnosticsContext: workflowLaunchDiagnosticsContext,
             isLocal: connection.isLocal,
-            localShellEnvironment: localShellEnvironment
+            localShellEnvironment: localShellEnvironment,
+            startupCommandLine: startupCommandLine
         )
     }
 
@@ -157,20 +159,20 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
         viewHost.setDataReceivedCallback(handler)
     }
 
+    /// Resize the terminal emulator before the PTY is spawned so the shell opens at the
+    /// requested dimensions.  Call before `startHeadless()`.
+    func resize(cols: Int, rows: Int) {
+        viewHost.resizeTerminal(cols: cols, rows: rows)
+    }
+
     // MARK: - Local environment builder
 
     private static func buildLocalEnvironment(
         hermesHomeExpression: String,
-        searchPathExpression: String,
-        startupCommandLine: String?
+        searchPathExpression: String
     ) -> [String] {
-        // Resolve HERMES_HOME by expanding $HOME references at process start time
-        // (the expressions may contain $HOME which the shell will expand from the
-        // login shell's environment, so we pass them as-is and let -l do the rest).
         var env = ProcessInfo.processInfo.environment
 
-        // Override/inject the Hermes-specific vars so the login shell inherits them.
-        // The expressions may reference $HOME; we pre-expand using the real HOME.
         let homeDir = env["HOME"] ?? NSHomeDirectory()
 
         let hermesHome = hermesHomeExpression
@@ -184,20 +186,8 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
 
-        // Voice mode: keep faster-whisper / HuggingFace models fully offline so the
-        // Hermes agent's STT subprocess never attempts a network fetch during push-to-talk.
         env["HF_HUB_OFFLINE"] = "1"
         env["TRANSFORMERS_OFFLINE"] = "1"
-
-        // If a startup command was requested, inject it via HERMES_STARTUP_CMD so
-        // the shell's ENV file or ZDOTDIR can run it — but the reliable approach is
-        // to deliver it as initialInput (the existing bracketedPaste path).  We
-        // store the command in the env so callers who need it can read it; the
-        // primary delivery is through TerminalLaunchRequest.initialInput.
-        if let startupCommandLine,
-           !startupCommandLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            env["HERMES_STARTUP_CMD"] = startupCommandLine
-        }
 
         return env.map { "\($0.key)=\($0.value)" }
     }

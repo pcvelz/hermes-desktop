@@ -165,12 +165,25 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
 
     private func startLocalProcess(for request: TerminalLaunchRequest) {
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        let args: [String]
+        if let startup = request.startupCommandLine,
+           !startup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            args = ["-lc", "\(startup); exec \(shell) -l"]
+        } else {
+            args = ["-l"]
+        }
         hostView.terminalView.startProcess(
             executable: shell,
-            args: ["-l"],
+            args: args,
             environment: request.localShellEnvironment,
             execName: (shell as NSString).lastPathComponent
         )
+    }
+
+    /// Resize the terminal emulator to the given column/row count.
+    /// Must be called before `startHeadless` so the PTY is opened at the right size.
+    func resizeTerminal(cols: Int, rows: Int) {
+        hostView.terminalView.terminal.resize(cols: cols, rows: rows)
     }
 
     private func applyAppearance(_ appearance: TerminalThemeAppearance, backgroundImageActive: Bool) {
@@ -305,6 +318,7 @@ struct TerminalLaunchRequest {
     // When set, the terminal launches a local login shell instead of SSH.
     let isLocal: Bool
     let localShellEnvironment: [String]
+    let startupCommandLine: String?
 
     init(
         sshArguments: [String],
@@ -313,7 +327,8 @@ struct TerminalLaunchRequest {
         workflowLaunchDiagnostics: WorkflowLaunchDiagnostics,
         workflowLaunchDiagnosticsContext: WorkflowLaunchDiagnosticsContext?,
         isLocal: Bool = false,
-        localShellEnvironment: [String] = []
+        localShellEnvironment: [String] = [],
+        startupCommandLine: String? = nil
     ) {
         self.sshArguments = sshArguments
         self.launchToken = launchToken
@@ -322,6 +337,7 @@ struct TerminalLaunchRequest {
         self.workflowLaunchDiagnosticsContext = workflowLaunchDiagnosticsContext
         self.isLocal = isLocal
         self.localShellEnvironment = localShellEnvironment
+        self.startupCommandLine = startupCommandLine
     }
 }
 

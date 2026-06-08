@@ -461,6 +461,10 @@ private final class ControlServer: @unchecked Sendable {
             self.appendBuffer(sessionID: sessionID, text: text)
         }
 
+        if let cols = req.cols, let rows = req.rows {
+            tab.session.resize(cols: Int(cols), rows: Int(rows))
+        }
+
         // Start the PTY process immediately without waiting for the SwiftUI layer to
         // render a visible tab.  The callback above must be installed first so no early
         // output is lost.
@@ -492,7 +496,7 @@ private final class ControlServer: @unchecked Sendable {
         if let tabID = UUID(uuidString: sessionID),
            let tab = terminalWorkspace.tabs.first(where: { $0.id == tabID }) {
             tab.session.sendInput(input)
-            self.respond(over: connection, status: 200, json: jsonObject(["ok": true]))
+            self.respond(over: connection, status: 200, json: jsonObject(["ok": true, "session_id": sessionID]))
         } else {
             self.respond(over: connection, status: 404, error: "no such terminal session")
         }
