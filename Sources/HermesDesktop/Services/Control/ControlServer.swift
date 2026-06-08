@@ -626,6 +626,7 @@ private final class ControlServer: @unchecked Sendable {
 
     // MARK: - hermes CLI execution (blocking chat turn)
 
+    @MainActor
     private func runHermesChat(
         profile: ConnectionProfile,
         sessionID: String?,
