@@ -160,6 +160,11 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
 
+        // Voice mode: keep faster-whisper / HuggingFace models fully offline so the
+        // Hermes agent's STT subprocess never attempts a network fetch during push-to-talk.
+        env["HF_HUB_OFFLINE"] = "1"
+        env["TRANSFORMERS_OFFLINE"] = "1"
+
         // If a startup command was requested, inject it via HERMES_STARTUP_CMD so
         // the shell's ENV file or ZDOTDIR can run it — but the reliable approach is
         // to deliver it as initialInput (the existing bracketedPaste path).  We
