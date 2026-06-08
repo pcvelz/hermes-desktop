@@ -97,6 +97,22 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
         initialInputTask?.cancel()
         initialInputTask = nil
 
+        if request.isLocal {
+            startLocalProcess(for: request)
+        } else {
+            startSSHProcess(for: request)
+        }
+
+        onProcessStart?()
+        if let workflowLaunchDiagnosticsContext = request.workflowLaunchDiagnosticsContext {
+            Task {
+                await request.workflowLaunchDiagnostics.recordTerminalProcessStarted(workflowLaunchDiagnosticsContext)
+            }
+        }
+        deliverInitialInputIfNeeded(for: request)
+    }
+
+    private func startSSHProcess(for request: TerminalLaunchRequest) {
         let environment = [
             "TERM=xterm-256color",
             "COLORTERM=truecolor"
@@ -108,13 +124,16 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
             environment: environment,
             execName: "ssh"
         )
-        onProcessStart?()
-        if let workflowLaunchDiagnosticsContext = request.workflowLaunchDiagnosticsContext {
-            Task {
-                await request.workflowLaunchDiagnostics.recordTerminalProcessStarted(workflowLaunchDiagnosticsContext)
-            }
-        }
-        deliverInitialInputIfNeeded(for: request)
+    }
+
+    private func startLocalProcess(for request: TerminalLaunchRequest) {
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        hostView.terminalView.startProcess(
+            executable: shell,
+            args: ["-l"],
+            environment: request.localShellEnvironment,
+            execName: (shell as NSString).lastPathComponent
+        )
     }
 
     private func applyAppearance(_ appearance: TerminalThemeAppearance, backgroundImageActive: Bool) {
@@ -244,6 +263,29 @@ struct TerminalLaunchRequest {
     let initialInput: String?
     let workflowLaunchDiagnostics: WorkflowLaunchDiagnostics
     let workflowLaunchDiagnosticsContext: WorkflowLaunchDiagnosticsContext?
+
+    // Local-transport fields (isLocal == true).
+    // When set, the terminal launches a local login shell instead of SSH.
+    let isLocal: Bool
+    let localShellEnvironment: [String]
+
+    init(
+        sshArguments: [String],
+        launchToken: UUID,
+        initialInput: String?,
+        workflowLaunchDiagnostics: WorkflowLaunchDiagnostics,
+        workflowLaunchDiagnosticsContext: WorkflowLaunchDiagnosticsContext?,
+        isLocal: Bool = false,
+        localShellEnvironment: [String] = []
+    ) {
+        self.sshArguments = sshArguments
+        self.launchToken = launchToken
+        self.initialInput = initialInput
+        self.workflowLaunchDiagnostics = workflowLaunchDiagnostics
+        self.workflowLaunchDiagnosticsContext = workflowLaunchDiagnosticsContext
+        self.isLocal = isLocal
+        self.localShellEnvironment = localShellEnvironment
+    }
 }
 
 final class TerminalMountContainerView: NSView {
