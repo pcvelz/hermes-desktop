@@ -261,6 +261,12 @@ private final class ControlServer: @unchecked Sendable {
         case ("GET", let s) where s.count == 4 && s[0] == "terminal" && s[1] == "session" && s[3] == "output":
             handleTerminalOutput(sessionID: s[2], query: query, connection: connection)
 
+        case ("GET", ["workflows"]):
+            Task { @MainActor [weak self] in self?.handleListWorkflows(connection: connection) }
+
+        case ("POST", let s) where s.count == 3 && s[0] == "workflows" && s[2] == "launch":
+            Task { @MainActor [weak self] in self?.handleLaunchWorkflow(workflowID: s[1], connection: connection) }
+
         default:
             respond(over: connection, status: 404, error: "not found")
         }
@@ -513,6 +519,109 @@ private final class ControlServer: @unchecked Sendable {
         } else {
             respond(over: connection, status: 404, error: "no such session (or no output captured yet)")
         }
+    }
+
+    // MARK: - Workflows
+
+    /// GET /workflows — list saved workflows for the active connection/profile.
+    /// Workflows are stored locally per workspace scope (host + Hermes home), so the
+    /// returned set matches the GUI Workflows tab for the active connection.
+    @MainActor
+    private func handleListWorkflows(connection: NWConnection) {
+        let profile: ConnectionProfile
+        do {
+            profile = try resolveActiveProfile()
+        } catch {
+            self.respond(over: connection, status: controlStatus(error), error: error.localizedDescription)
+            return
+        }
+
+        let workflows = connectionStore.workflows(for: profile.workspaceScopeFingerprint)
+        let items: [[String: Any]] = workflows.map { workflow in
+            [
+                "id": workflow.id.uuidString,
+                "name": workflow.name,
+                "prompt": workflow.prompt,
+                "skills": workflow.assignedSkills.map { skill -> [String: Any] in
+                    [
+                        "relative_path": skill.relativePath,
+                        "slug": skill.slug,
+                        "name": skill.resolvedName
+                    ]
+                }
+            ]
+        }
+
+        self.respond(over: connection, status: 200, json: jsonObject([
+            "ok": true,
+            "workspace_scope": profile.workspaceScopeFingerprint,
+            "workflows": items
+        ]))
+    }
+
+    /// POST /workflows/{id}/launch — launch a saved workflow into a headless control
+    /// terminal session (reuses the /terminal/session machinery) and return the session id.
+    /// The workflow's prompt seeds the session as initial input; assigned skills are
+    /// preloaded via the Hermes CLI `--skills` flags built by WorkflowLaunchInvocation.
+    @MainActor
+    private func handleLaunchWorkflow(workflowID: String, connection: NWConnection) {
+        let profile: ConnectionProfile
+        do {
+            profile = try resolveActiveProfile()
+        } catch {
+            self.respond(over: connection, status: controlStatus(error), error: error.localizedDescription)
+            return
+        }
+
+        guard let uuid = UUID(uuidString: workflowID) else {
+            respond(over: connection, status: 400, error: "invalid workflow id")
+            return
+        }
+
+        let workflows = connectionStore.workflows(for: profile.workspaceScopeFingerprint)
+        guard let workflow = workflows.first(where: { $0.id == uuid }) else {
+            respond(over: connection, status: 404, error: "no such workflow for the active connection")
+            return
+        }
+
+        let invocation = WorkflowLaunchInvocation(workflow: workflow, connection: profile)
+
+        let tab = terminalWorkspace.addTab(
+            for: profile.updated(),
+            startupCommandLine: invocation.startupCommandLine,
+            startupInput: invocation.initialInput
+        )
+
+        let sessionID = tab.id.uuidString
+
+        // Emit a notification so the SwiftUI layer renders a visible tab (mirrors /terminal/session).
+        NotificationCenter.default.post(
+            name: .controlTerminalSessionAttach,
+            object: nil,
+            userInfo: ["session_id": sessionID, "tab_id": tab.id.uuidString]
+        )
+
+        // Seed an empty buffer so the session is discoverable by the output endpoint.
+        appendBuffer(sessionID: sessionID, text: "")
+
+        tab.session.installOutputCapture { [weak self] slice in
+            guard let self else { return }
+            let text = String(bytes: slice, encoding: .utf8)
+                ?? String(slice.map { Character(UnicodeScalar($0)) })
+            self.appendBuffer(sessionID: sessionID, text: text)
+        }
+
+        tab.session.startHeadless()
+
+        self.respond(over: connection, status: 200, json: jsonObject([
+            "ok": true,
+            "id": sessionID,
+            "tab_id": tab.id.uuidString,
+            "label": tab.title,
+            "workflow_id": workflow.id.uuidString,
+            "workflow_name": workflow.name,
+            "command_line": invocation.startupCommandLine
+        ]))
     }
 
     // MARK: - hermes CLI execution (blocking chat turn)

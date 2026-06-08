@@ -177,6 +177,63 @@ Query param: `raw=1` — return ANSI/VT bytes verbatim (default strips them).
 
 ---
 
+### GET /workflows
+
+List the saved workflows for the active connection/profile. Workflows are stored
+locally per **workspace scope** (host + Hermes home), so the returned set matches
+the GUI Workflows tab for the active connection.
+
+Response:
+
+```json
+{
+  "ok": true,
+  "workspace_scope": "local|||~/.hermes/profiles/coding",
+  "workflows": [
+    {
+      "id": "FE4F5A7D-E2DF-460B-A10B-173BBF8F9F19",
+      "name": "GitLab MR Watcher",
+      "prompt": "You are operating the autonomous GitLab MR watcher. ...",
+      "skills": [
+        { "relative_path": "devops/gitlab-mr-watcher", "slug": "gitlab-mr-watcher", "name": "gitlab-mr-watcher" }
+      ]
+    }
+  ]
+}
+```
+
+No active connection → **409**.
+
+---
+
+### POST /workflows/{id}/launch
+
+Launch a saved workflow into a **headless control terminal session** (reuses the
+`/terminal/session` machinery) and return the session id. The workflow's prompt
+seeds the session as initial input; assigned skills are preloaded via the Hermes
+CLI `--skills` flags. No request body required.
+
+Response:
+
+```json
+{
+  "ok": true,
+  "id": "<session-uuid>",
+  "tab_id": "<tab-uuid>",
+  "label": "Local Hermes · coding",
+  "workflow_id": "FE4F5A7D-E2DF-460B-A10B-173BBF8F9F19",
+  "workflow_name": "GitLab MR Watcher",
+  "command_line": "...hermes --profile coding --skills devops/gitlab-mr-watcher chat"
+}
+```
+
+- `{id}` must be a workflow UUID for the active connection.
+- Invalid UUID → **400**; unknown workflow → **404**; no active connection → **409**.
+- Use `id` with the `/terminal/session/{id}/write` and `/output` endpoints to drive
+  and read the launched session.
+
+---
+
 ## 4 Profile resolution
 
 When `hermes_home` and `profile` are both absent the server uses the active
