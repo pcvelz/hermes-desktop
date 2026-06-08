@@ -1,0 +1,18 @@
+#!/bin/bash
+#
+# pre-push hook for hermes-desktop. Runs scripts/preflight.sh and blocks the
+# push if the locally-reproducible CI gates fail. Install with:
+#
+#     git config core.hooksPath scripts/githooks
+#
+# Bypass for an intentional WIP push:  git push --no-verify
+#
+set -euo pipefail
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+echo "pre-push: running scripts/preflight.sh ..."
+if ! "$ROOT_DIR/scripts/preflight.sh"; then
+    echo
+    echo "pre-push: BLOCKED — preflight failed. Fix the issues or override with 'git push --no-verify'."
+    exit 1
+fi
