@@ -163,6 +163,18 @@ final class AppState: ObservableObject {
         persistActiveConnectionSelectionIfNeeded()
 
         selectedSection = .connections
+
+        NotificationCenter.default.publisher(for: .controlTerminalSessionAttach)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] notification in
+                guard let self else { return }
+                guard let tabIDString = notification.userInfo?["tab_id"] as? String,
+                      let tabID = UUID(uuidString: tabIDString) else { return }
+                self.terminalWorkspace.selectTab(tabID)
+                self.selectedSection = .terminal
+                self.handleSectionEntry(.terminal)
+            }
+            .store(in: &cancellables)
     }
 
     var activeConnection: ConnectionProfile? {
