@@ -66,7 +66,7 @@ final class ConnectionStore: ObservableObject {
             persistPreferencesIfNeeded()
         }
     }
-    @Published var automaticallyChecksForUpdates = true {
+    @Published var automaticallyChecksForUpdates = false {
         didSet {
             persistPreferencesIfNeeded()
         }
@@ -509,7 +509,7 @@ final class ConnectionStore: ObservableObject {
                 windowMaterial: .solid,
                 backgroundImageFit: .fill,
                 backgroundImageBlur: AppBackgroundImageBlurPreference.defaultValue,
-                automaticallyChecksForUpdates: true,
+                automaticallyChecksForUpdates: false,
                 lastAutomaticUpdateCheckAt: nil,
                 backgroundImage: nil,
                 workspaceFileBookmarks: [],
@@ -532,7 +532,7 @@ final class ConnectionStore: ObservableObject {
         windowMaterial = preferences.windowMaterial?.normalizedForDisplay ?? .solid
         backgroundImageFit = preferences.backgroundImageFit ?? .fill
         backgroundImageBlur = AppBackgroundImageBlurPreference.clamped(preferences.backgroundImageBlur ?? AppBackgroundImageBlurPreference.defaultValue)
-        automaticallyChecksForUpdates = preferences.automaticallyChecksForUpdates ?? true
+        automaticallyChecksForUpdates = preferences.automaticallyChecksForUpdates ?? false
         lastAutomaticUpdateCheckAt = preferences.lastAutomaticUpdateCheckAt
         backgroundImage = preferences.backgroundImage
         workspaceFileBookmarks = preferences.workspaceFileBookmarks ?? []

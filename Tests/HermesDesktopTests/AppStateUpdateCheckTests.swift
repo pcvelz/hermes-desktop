@@ -26,6 +26,8 @@ struct AppStateUpdateCheckTests {
 
         #expect(appState.connectionStore.lastAutomaticUpdateCheckAt == nil)
 
+        // Enable automatic checks (default is OFF; opt-in required for launch check to fire).
+        appState.connectionStore.automaticallyChecksForUpdates = true
         await appState.checkForUpdatesAtLaunch()
 
         #expect(appState.connectionStore.lastAutomaticUpdateCheckAt != nil)

@@ -50,7 +50,7 @@ struct ConnectionStoreTests {
         #expect(store.windowMaterial == .solid)
         #expect(store.backgroundImageFit == .fill)
         #expect(store.backgroundImageBlur == 0)
-        #expect(store.automaticallyChecksForUpdates)
+        #expect(!store.automaticallyChecksForUpdates)
         #expect(store.workspaceFileBookmarks.isEmpty)
         #expect(store.pinnedSessions.isEmpty)
         #expect(store.persistenceError?.contains("Unable to load app preferences") == true)
