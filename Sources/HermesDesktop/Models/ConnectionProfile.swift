@@ -3,6 +3,7 @@ import Foundation
 struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     var id: UUID
     var label: String
+    var isLocal: Bool
     var sshAlias: String
     var sshHost: String
     var sshPort: Int?
@@ -13,9 +14,25 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     var updatedAt: Date
     var lastConnectedAt: Date?
 
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case isLocal
+        case sshAlias
+        case sshHost
+        case sshPort
+        case sshUser
+        case hermesProfile
+        case customHermesHomePath
+        case createdAt
+        case updatedAt
+        case lastConnectedAt
+    }
+
     init(
         id: UUID = UUID(),
         label: String = "",
+        isLocal: Bool = false,
         sshAlias: String = "",
         sshHost: String = "",
         sshPort: Int? = nil,
@@ -28,6 +45,7 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     ) {
         self.id = id
         self.label = label
+        self.isLocal = isLocal
         self.sshAlias = sshAlias
         self.sshHost = sshHost
         self.sshPort = sshPort
@@ -37,6 +55,22 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.lastConnectedAt = lastConnectedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        label = try container.decode(String.self, forKey: .label)
+        isLocal = try container.decodeIfPresent(Bool.self, forKey: .isLocal) ?? false
+        sshAlias = try container.decodeIfPresent(String.self, forKey: .sshAlias) ?? ""
+        sshHost = try container.decodeIfPresent(String.self, forKey: .sshHost) ?? ""
+        sshPort = try container.decodeIfPresent(Int.self, forKey: .sshPort)
+        sshUser = try container.decodeIfPresent(String.self, forKey: .sshUser) ?? ""
+        hermesProfile = try container.decodeIfPresent(String.self, forKey: .hermesProfile)
+        customHermesHomePath = try container.decodeIfPresent(String.self, forKey: .customHermesHomePath)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        lastConnectedAt = try container.decodeIfPresent(Date.self, forKey: .lastConnectedAt)
     }
 
     var trimmedAlias: String? {
@@ -202,7 +236,10 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     }
 
     var workspaceScopeFingerprint: String {
-        [
+        if isLocal {
+            return ["local", "", "", remoteHermesHomePath].joined(separator: "|")
+        }
+        return [
             effectiveTarget,
             trimmedUser ?? "",
             resolvedPort.map(String.init) ?? "",
@@ -219,7 +256,8 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     }
 
     var effectiveTarget: String {
-        trimmedAlias ?? trimmedHost ?? ""
+        if isLocal { return "localhost" }
+        return trimmedAlias ?? trimmedHost ?? ""
     }
 
     var usesAliasSourceOfTruth: Bool {
@@ -235,6 +273,7 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     }
 
     var displayDestination: String {
+        if isLocal { return "this machine (local)" }
         guard let user = trimmedUser else {
             return effectiveTarget
         }
@@ -254,6 +293,8 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     }
 
     var sshValidationError: String? {
+        if isLocal { return nil }
+
         guard !effectiveTarget.isEmpty else {
             return "Add an SSH alias or host."
         }
@@ -298,14 +339,21 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     func updated() -> ConnectionProfile {
         var copy = self
         copy.label = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        copy.sshAlias = sshAlias.trimmingCharacters(in: .whitespacesAndNewlines)
-        copy.sshHost = sshHost.trimmingCharacters(in: .whitespacesAndNewlines)
-        copy.sshUser = sshUser.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isLocal {
+            copy.sshAlias = ""
+            copy.sshHost = ""
+            copy.sshUser = ""
+            copy.sshPort = nil
+        } else {
+            copy.sshAlias = sshAlias.trimmingCharacters(in: .whitespacesAndNewlines)
+            copy.sshHost = sshHost.trimmingCharacters(in: .whitespacesAndNewlines)
+            copy.sshUser = sshUser.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let sshPort = sshPort, sshPort <= 0 {
+                copy.sshPort = nil
+            }
+        }
         copy.hermesProfile = trimmedHermesProfile
         copy.customHermesHomePath = trimmedCustomHermesHomePath
-        if let sshPort = sshPort, sshPort <= 0 {
-            copy.sshPort = nil
-        }
         copy.updatedAt = Date()
         return copy
     }

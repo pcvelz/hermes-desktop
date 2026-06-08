@@ -57,6 +57,15 @@ final class SSHTransport: @unchecked Sendable {
         standardInput: Data? = nil,
         allocateTTY: Bool
     ) async throws -> SSHCommandResult {
+        if connection.isLocal {
+            return try await runLocal(
+                command: remoteCommand,
+                hermesHomeExpression: connection.remoteHermesHomeShellExpression,
+                searchPathExpression: connection.remoteHermesSearchPathShellExpression,
+                standardInput: standardInput
+            )
+        }
+
         guard !connection.effectiveTarget.isEmpty else {
             throw SSHTransportError.invalidConnection("The SSH target is empty.")
         }
@@ -173,6 +182,27 @@ final class SSHTransport: @unchecked Sendable {
             stderr: stderr,
             exitCode: exitCode,
             connection: connection
+        )
+    }
+
+    // MARK: - Local execution
+
+    private func runLocal(
+        command: String,
+        hermesHomeExpression: String,
+        searchPathExpression: String,
+        standardInput: Data?
+    ) async throws -> SSHCommandResult {
+        // Wrap the caller's command in the same HERMES_HOME / PATH preamble that
+        // remote execution uses, then run it through /bin/sh -c on this machine.
+        let exportHermesHome = "export HERMES_HOME=\"\(hermesHomeExpression)\""
+        let exportPath = "export PATH=\"\(searchPathExpression)\""
+        let wrapped = "\(exportHermesHome); \(exportPath); \(command)"
+
+        return try await processRunner.run(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", wrapped],
+            standardInput: standardInput
         )
     }
 
