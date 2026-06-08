@@ -88,47 +88,81 @@ private final class ControlServer: @unchecked Sendable {
 
         fputs("[control] listening on http://127.0.0.1:\(port) (pid \(pid))\n", stderr)
 
-        let semaphore = DispatchSemaphore(value: 0)
-
-        listener.newConnectionHandler = { [weak self] (connection: NWConnection) in
-            guard let self else { return }
-            self.accept(connection)
-        }
+        let runSemaphore = DispatchSemaphore(value: 0)
 
         listener.stateUpdateHandler = { (state: NWListener.State) in
             switch state {
             case .failed(let error):
-                fputs("[control] listener failed: \(error)\n", stderr)
-                semaphore.signal()
+                fputs("[control] listener failed after bind: \(error)\n", stderr)
+                runSemaphore.signal()
             case .cancelled:
-                semaphore.signal()
+                runSemaphore.signal()
             default:
                 break
             }
         }
 
-        listener.start(queue: DispatchQueue(label: "hermes-control-listener", qos: .utility))
-        semaphore.wait()
+        runSemaphore.wait()
     }
 
+    /// Probe each candidate port by creating an NWListener, wiring both handlers, starting it,
+    /// and waiting up to 2 s for its state to resolve.  Returns the first listener that reaches
+    /// .ready together with its actual bound port — the listener is fully operational at that
+    /// point (newConnectionHandler already installed).  A .failed or .cancelled state means the
+    /// port is unavailable; cancel that listener and advance to the next candidate.
     private func openListener() -> (NWListener, UInt16)? {
         let envPort = ProcessInfo.processInfo.environment["HERMES_DESKTOP_CONTROL_PORT"]
             .flatMap { UInt16($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
         let base = envPort ?? defaultPort
+        let scanCount: UInt16 = envPort != nil ? 1 : portScanLimit
 
-        for offset in UInt16(0)..<portScanLimit {
+        for offset in UInt16(0)..<scanCount {
             let candidate = base &+ offset
-            do {
-                let params = NWParameters.tcp
-                params.requiredLocalEndpoint = NWEndpoint.hostPort(
-                    host: "127.0.0.1",
-                    port: NWEndpoint.Port(rawValue: candidate)!
-                )
-                let listener = try NWListener(using: params)
-                return (listener, candidate)
-            } catch {
-                fputs("[control] port \(candidate) unavailable: \(error)\n", stderr)
+            let params = NWParameters.tcp
+            params.requiredLocalEndpoint = NWEndpoint.hostPort(
+                host: "127.0.0.1",
+                port: NWEndpoint.Port(rawValue: candidate)!
+            )
+
+            guard let listener = try? NWListener(using: params) else {
+                fputs("[control] port \(candidate) could not construct NWListener\n", stderr)
+                continue
             }
+
+            let bindSemaphore = DispatchSemaphore(value: 0)
+            let bindResult = Locked(false)
+
+            listener.newConnectionHandler = { [weak self] connection in
+                self?.accept(connection)
+            }
+
+            listener.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    bindResult.set(true)
+                    bindSemaphore.signal()
+                case .failed, .cancelled:
+                    bindSemaphore.signal()
+                default:
+                    break
+                }
+            }
+
+            listener.start(queue: DispatchQueue(label: "hermes-control-listener", qos: .utility))
+
+            let timedOut = bindSemaphore.wait(timeout: .now() + 2.0) == .timedOut
+            if timedOut {
+                fputs("[control] port \(candidate) probe timed out\n", stderr)
+                listener.cancel()
+                continue
+            }
+
+            if bindResult.get() {
+                return (listener, candidate)
+            }
+
+            fputs("[control] port \(candidate) unavailable (NWListener not ready)\n", stderr)
+            listener.cancel()
         }
         return nil
     }
@@ -417,6 +451,20 @@ private final class ControlServer: @unchecked Sendable {
 
         // Seed an empty buffer so the session is discoverable by the output endpoint.
         appendBuffer(sessionID: sessionID, text: "")
+
+        // Bridge PTY output → rolling buffer.  The closure captures `sessionID` and
+        // `self` weakly; it is called on the main queue by LocalProcess's dispatch path.
+        tab.session.installOutputCapture { [weak self] slice in
+            guard let self else { return }
+            let text = String(bytes: slice, encoding: .utf8)
+                ?? String(slice.map { Character(UnicodeScalar($0)) })
+            self.appendBuffer(sessionID: sessionID, text: text)
+        }
+
+        // Start the PTY process immediately without waiting for the SwiftUI layer to
+        // render a visible tab.  The callback above must be installed first so no early
+        // output is lost.
+        tab.session.startHeadless()
 
         let obj = jsonObject([
             "ok": true,
@@ -807,6 +855,25 @@ private struct WriteBody: Decodable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         input = try c.decodeIfPresent(String.self, forKey: .input) ?? ""
         enter = try c.decodeIfPresent(Bool.self, forKey: .enter) ?? true
+    }
+}
+
+// MARK: - Thread-safe boolean box
+
+private final class Locked<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: T
+
+    init(_ initial: T) { value = initial }
+
+    func set(_ newValue: T) {
+        lock.lock(); defer { lock.unlock() }
+        value = newValue
+    }
+
+    func get() -> T {
+        lock.lock(); defer { lock.unlock() }
+        return value
     }
 }
 

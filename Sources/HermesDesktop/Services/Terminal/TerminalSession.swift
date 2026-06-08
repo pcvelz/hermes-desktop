@@ -106,20 +106,31 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
     ) {
         viewHost.mount(
             in: container,
-            request: TerminalLaunchRequest(
-                sshArguments: sshArguments,
-                launchToken: launchToken,
-                initialInput: startupInput,
-                workflowLaunchDiagnostics: workflowLaunchDiagnostics,
-                workflowLaunchDiagnosticsContext: workflowLaunchDiagnosticsContext,
-                isLocal: connection.isLocal,
-                localShellEnvironment: localShellEnvironment
-            ),
+            request: makeLaunchRequest(),
             appearance: appearance,
             fontSize: fontSize,
             fontFamily: fontFamily,
             isActive: isActive,
             backgroundImageActive: backgroundImageActive
+        )
+    }
+
+    /// Start the underlying PTY process immediately, without waiting for the SwiftUI
+    /// layer to render a visible tab.  Used by the control server so a session spawned
+    /// via the API gets a live shell right away and can capture output / accept writes.
+    func startHeadless() {
+        viewHost.startHeadless(request: makeLaunchRequest())
+    }
+
+    private func makeLaunchRequest() -> TerminalLaunchRequest {
+        TerminalLaunchRequest(
+            sshArguments: sshArguments,
+            launchToken: launchToken,
+            initialInput: startupInput,
+            workflowLaunchDiagnostics: workflowLaunchDiagnostics,
+            workflowLaunchDiagnosticsContext: workflowLaunchDiagnosticsContext,
+            isLocal: connection.isLocal,
+            localShellEnvironment: localShellEnvironment
         )
     }
 
@@ -137,6 +148,13 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
     /// POST /terminal/session/{id}/write endpoint).
     func sendInput(_ text: String) {
         viewHost.send(text: text)
+    }
+
+    /// Install a raw-bytes callback so every PTY output chunk is forwarded to `handler`.
+    /// Called by the control server immediately after spawning a control-owned session so
+    /// the GET /terminal/session/{id}/output buffer is populated with live data.
+    func installOutputCapture(_ handler: ((ArraySlice<UInt8>) -> Void)?) {
+        viewHost.setDataReceivedCallback(handler)
     }
 
     // MARK: - Local environment builder

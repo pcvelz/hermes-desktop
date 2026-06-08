@@ -2,6 +2,23 @@ import AppKit
 import Foundation
 @preconcurrency import SwiftTerm
 
+// MARK: - PTY output-intercepting terminal view
+
+/// Subclass of `LocalProcessTerminalView` that intercepts every raw byte chunk
+/// received from the PTY before feeding it to the terminal emulator.  The
+/// `onDataReceived` closure (set after construction) captures raw bytes so the
+/// control server can accumulate them in its rolling output buffer.
+final class ObservingLocalProcessTerminalView: LocalProcessTerminalView {
+    var onDataReceived: ((ArraySlice<UInt8>) -> Void)?
+
+    override func dataReceived(slice: ArraySlice<UInt8>) {
+        onDataReceived?(slice)
+        super.dataReceived(slice: slice)
+    }
+}
+
+// MARK: - TerminalViewHost
+
 @MainActor
 final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
     private static let bracketedPasteReadinessTimeout: TimeInterval = 60
@@ -21,6 +38,12 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
     override init() {
         super.init()
         hostView.terminalView.processDelegate = self
+    }
+
+    /// Install a closure that is called (on whatever queue `LocalProcess` dispatches to,
+    /// typically main) for every raw byte chunk emitted by the PTY.  Pass `nil` to remove.
+    func setDataReceivedCallback(_ callback: ((ArraySlice<UInt8>) -> Void)?) {
+        hostView.terminalView.onDataReceived = callback
     }
 
     func setEventHandlers(
@@ -48,6 +71,13 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
         applyAppearance(appearance, backgroundImageActive: backgroundImageActive)
         applyFont(fontSize: fontSize, fontFamily: fontFamily)
         setActive(isActive)
+        scheduleStartIfNeeded(for: request)
+    }
+
+    /// Start the PTY process without mounting into a visible window.
+    /// Used by the control server so a session spawned via the API gets a live
+    /// shell immediately, without waiting for the SwiftUI layer to render a tab.
+    func startHeadless(request: TerminalLaunchRequest) {
         scheduleStartIfNeeded(for: request)
     }
 
@@ -352,7 +382,7 @@ final class TerminalMountContainerView: NSView {
 }
 
 final class TerminalHostView: NSView {
-    let terminalView = LocalProcessTerminalView(frame: .zero)
+    let terminalView = ObservingLocalProcessTerminalView(frame: .zero)
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
