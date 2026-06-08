@@ -1,5 +1,11 @@
 # Hermes Desktop
 
+> **Attribution:** a native-Swift macOS build derived from
+> [dodo-reach/hermes-desktop](https://github.com/dodo-reach/hermes-desktop),
+> used under its MIT License (© 2026 dodo-reach — see [LICENSE](LICENSE)).
+> This derivative adds a local **no-SSH** transport for a Hermes home on the
+> same Mac and a **localhost control endpoint** for driving the agent headlessly.
+
 Native macOS companion for Hermes Agent over SSH.
 
 It turns the daily Hermes loop into something you can actually live in on a
