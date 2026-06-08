@@ -645,6 +645,8 @@
 "mac-studio.local, 203.0.113.10, localhost" = "mac-studio.local, 203.0.113.10, localhost";
 "default or researcher" = "default or researcher";
 "Only use this if Hermes lives outside the standard `~/.hermes` or `~/.hermes/profiles/<name>` layout on the remote host." = "Only use this if Hermes lives outside the standard `~/.hermes` or `~/.hermes/profiles/<name>` layout on the remote host.";
+"Only use this if Hermes lives outside the standard `~/.hermes` or `~/.hermes/profiles/<name>` layout on the local machine." = "Only use this if Hermes lives outside the standard `~/.hermes` or `~/.hermes/profiles/<name>` layout on the local machine.";
+"On this machine (local — no SSH needed)" = "On this machine (local — no SSH needed)";
 "Remote Hermes home path" = "Remote Hermes home path";
 "~/.hermes-work or /opt/data" = "~/.hermes-work or /opt/data";
 "Remote debugging, Deploy to VPS, Research notes" = "Remote debugging, Deploy to VPS, Research notes";

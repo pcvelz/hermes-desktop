@@ -120,7 +120,9 @@ struct ConnectionEditorSheet: View {
                                             .textFieldStyle(.roundedBorder)
                                     }
 
-                                    Text(L10n.string("Only use this if Hermes lives outside the standard `~/.hermes` or `~/.hermes/profiles/<name>` layout on the \(draft.isLocal ? "local machine" : "remote host")."))
+                                    Text(draft.isLocal
+                                        ? L10n.string("Only use this if Hermes lives outside the standard `~/.hermes` or `~/.hermes/profiles/<name>` layout on the local machine.")
+                                        : L10n.string("Only use this if Hermes lives outside the standard `~/.hermes` or `~/.hermes/profiles/<name>` layout on the remote host."))
                                         .font(.subheadline)
                                         .foregroundStyle(.secondary)
                                         .fixedSize(horizontal: false, vertical: true)
