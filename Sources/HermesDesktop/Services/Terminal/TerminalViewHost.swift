@@ -59,6 +59,13 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
         performSelector(onMainThread: #selector(terminateOnMainThread), with: nil, waitUntilDone: false)
     }
 
+    /// Deliver text as raw input to the running PTY (for the control server write route).
+    nonisolated func send(text: String) {
+        Task { @MainActor [weak self] in
+            self?.hostView.send(text)
+        }
+    }
+
     nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
 
     nonisolated func setTerminalTitle(source: LocalProcessTerminalView, title: String) {

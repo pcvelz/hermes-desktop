@@ -32,6 +32,8 @@
     <string>Hermes Desktop contributors</string>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Hermes uses the microphone for voice mode (push-to-talk speech input).</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>

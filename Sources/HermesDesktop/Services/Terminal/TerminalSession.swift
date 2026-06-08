@@ -133,6 +133,12 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
         currentDirectory = nil
     }
 
+    /// Send raw input bytes to the running PTY (used by the control server's
+    /// POST /terminal/session/{id}/write endpoint).
+    func sendInput(_ text: String) {
+        viewHost.send(text: text)
+    }
+
     // MARK: - Local environment builder
 
     private static func buildLocalEnvironment(
@@ -159,6 +165,11 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
         env["PATH"] = searchPath
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
+
+        // Voice mode: keep faster-whisper / HuggingFace models fully offline so the
+        // Hermes agent's STT subprocess never attempts a network fetch during push-to-talk.
+        env["HF_HUB_OFFLINE"] = "1"
+        env["TRANSFORMERS_OFFLINE"] = "1"
 
         // If a startup command was requested, inject it via HERMES_STARTUP_CMD so
         // the shell's ENV file or ZDOTDIR can run it — but the reliable approach is
