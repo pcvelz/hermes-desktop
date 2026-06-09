@@ -200,7 +200,10 @@ struct TerminalThemePreference: Codable, Equatable {
     var customForegroundColor: TerminalThemeColor?
     var paletteStyle: TerminalThemeStyle?
 
-    static let defaultValue = TerminalThemePreference()
+    // Graphite is the shipped default terminal theme (bg #12161D / fg #E7ECF3).
+    // This is the single source of truth consumed by ConnectionStore,
+    // TerminalWorkspaceStore, TerminalSession, etc. for a fresh/unset preference.
+    static let defaultValue = TerminalThemePreference(style: .graphite)
 
     var resolvedAppearance: TerminalThemeAppearance {
         switch style {
