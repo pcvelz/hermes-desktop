@@ -195,9 +195,19 @@ final class SSHTransport: @unchecked Sendable {
     ) async throws -> SSHCommandResult {
         // Wrap the caller's command in the same HERMES_HOME / PATH preamble that
         // remote execution uses, then run it through /bin/sh -c on this machine.
+        //
+        // HERMES_HEADLESS=1 is mandatory here: this path spawns the agent for
+        // one-shot RPC / chat turns driven by the control endpoint — there is no
+        // user at a TTY and no SSH_* vars to signal "no display". Without it the
+        // agent's OAuth flows (google_oauth._is_headless / mcp_oauth) decide a
+        // browser is available and pop the user's default browser (Firefox)
+        // mid-chat instead of returning the auth URL in the reply. The
+        // interactive terminal PTY is a separate spawn and is intentionally
+        // left untouched (a user there may legitimately want a browser open).
         let exportHermesHome = "export HERMES_HOME=\"\(hermesHomeExpression)\""
         let exportPath = "export PATH=\"\(searchPathExpression)\""
-        let wrapped = "\(exportHermesHome); \(exportPath); \(command)"
+        let exportHeadless = "export HERMES_HEADLESS=1"
+        let wrapped = "\(exportHermesHome); \(exportPath); \(exportHeadless); \(command)"
 
         return try await processRunner.run(
             executableURL: URL(fileURLWithPath: "/bin/sh"),
