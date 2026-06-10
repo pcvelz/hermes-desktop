@@ -8,6 +8,7 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
     let localShellEnvironment: [String]
     let startupInput: String?
     let startupCommandLine: String?
+    let exitAfterStartupCommand: Bool
     let workflowLaunchDiagnosticsContext: WorkflowLaunchDiagnosticsContext?
     private let workflowLaunchDiagnostics: WorkflowLaunchDiagnostics
     private let viewHost = TerminalViewHost()
@@ -24,6 +25,7 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
         sshTransport: SSHTransport,
         terminalTheme: TerminalThemePreference = .defaultValue,
         startupCommandLine: String? = nil,
+        exitAfterStartupCommand: Bool = false,
         startupInput: String? = nil,
         workflowLaunchDiagnostics: WorkflowLaunchDiagnostics,
         workflowLaunchDiagnosticsContext: WorkflowLaunchDiagnosticsContext? = nil
@@ -31,6 +33,7 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
         self.connection = connection
         self.startupInput = startupInput
         self.startupCommandLine = startupCommandLine
+        self.exitAfterStartupCommand = exitAfterStartupCommand
         self.workflowLaunchDiagnostics = workflowLaunchDiagnostics
         self.workflowLaunchDiagnosticsContext = workflowLaunchDiagnosticsContext
 
@@ -135,7 +138,8 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
             workflowLaunchDiagnosticsContext: workflowLaunchDiagnosticsContext,
             isLocal: connection.isLocal,
             localShellEnvironment: localShellEnvironment,
-            startupCommandLine: startupCommandLine
+            startupCommandLine: startupCommandLine,
+            exitAfterStartupCommand: exitAfterStartupCommand
         )
     }
 

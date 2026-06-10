@@ -1121,8 +1121,15 @@ final class AppState: ObservableObject {
         }
 
         let sessionID = selectedSessionID
-        if sessionTUITerminal?.matches(sessionID: sessionID, connection: profile) == true {
+        if sessionTUITerminal?.matches(sessionID: sessionID, connection: profile) == true,
+           sessionTUITerminal?.terminalSession.isRunning == true {
             return
+        }
+
+        // Treat a non-running terminal like nil: stop and clear it so that
+        // the guard below and startSessionTUI can spawn a fresh one.
+        if let existing = sessionTUITerminal, !existing.terminalSession.isRunning {
+            stopSessionTUI()
         }
 
         guard sessionTUITerminal == nil else { return }
@@ -1143,6 +1150,11 @@ final class AppState: ObservableObject {
             return
         }
 
+        // Clear a dead terminal before deciding whether to replace or bail.
+        if let existing = sessionTUITerminal, !existing.terminalSession.isRunning {
+            stopSessionTUI()
+        }
+
         if replacesExisting {
             stopSessionTUI()
         } else if sessionTUITerminal != nil {
@@ -1154,7 +1166,8 @@ final class AppState: ObservableObject {
             connection: updatedProfile,
             sshTransport: sshTransport,
             terminalTheme: connectionStore.terminalTheme,
-            workflowLaunchDiagnostics: workflowLaunchDiagnostics
+            workflowLaunchDiagnostics: workflowLaunchDiagnostics,
+            exitAfterStartupCommand: true
         )
         sessionsError = nil
         setStatusMessage(

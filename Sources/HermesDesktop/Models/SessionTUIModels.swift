@@ -20,6 +20,7 @@ final class SessionTUITerminal: ObservableObject, Identifiable {
         terminalTheme: TerminalThemePreference = .defaultValue,
         workflowLaunchDiagnostics: WorkflowLaunchDiagnostics,
         startupInput: String? = nil,
+        exitAfterStartupCommand: Bool = false,
         workflowLaunchDiagnosticsContext: WorkflowLaunchDiagnosticsContext? = nil
     ) {
         self.sessionID = sessionID
@@ -30,6 +31,7 @@ final class SessionTUITerminal: ObservableObject, Identifiable {
             sshTransport: sshTransport,
             terminalTheme: terminalTheme,
             startupCommandLine: invocation.startupCommandLine,
+            exitAfterStartupCommand: exitAfterStartupCommand,
             startupInput: startupInput,
             workflowLaunchDiagnostics: workflowLaunchDiagnostics,
             workflowLaunchDiagnosticsContext: workflowLaunchDiagnosticsContext

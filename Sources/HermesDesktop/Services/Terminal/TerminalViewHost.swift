@@ -168,7 +168,11 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
         let args: [String]
         if let startup = request.startupCommandLine,
            !startup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            args = ["-lc", "\(startup); exec \(shell) -l"]
+            if request.exitAfterStartupCommand {
+                args = ["-lc", startup]
+            } else {
+                args = ["-lc", "\(startup); exec \(shell) -l"]
+            }
         } else {
             args = ["-l"]
         }
@@ -319,6 +323,11 @@ struct TerminalLaunchRequest {
     let isLocal: Bool
     let localShellEnvironment: [String]
     let startupCommandLine: String?
+    /// When true, the PTY shell exits as soon as `startupCommandLine` finishes,
+    /// instead of exec-ing a persistent login shell afterward.  Only set for
+    /// session-chat TUI terminals so that `TerminalSession.isRunning` reflects
+    /// whether the Hermes TUI is actually alive.
+    let exitAfterStartupCommand: Bool
 
     init(
         sshArguments: [String],
@@ -328,7 +337,8 @@ struct TerminalLaunchRequest {
         workflowLaunchDiagnosticsContext: WorkflowLaunchDiagnosticsContext?,
         isLocal: Bool = false,
         localShellEnvironment: [String] = [],
-        startupCommandLine: String? = nil
+        startupCommandLine: String? = nil,
+        exitAfterStartupCommand: Bool = false
     ) {
         self.sshArguments = sshArguments
         self.launchToken = launchToken
@@ -338,6 +348,7 @@ struct TerminalLaunchRequest {
         self.isLocal = isLocal
         self.localShellEnvironment = localShellEnvironment
         self.startupCommandLine = startupCommandLine
+        self.exitAfterStartupCommand = exitAfterStartupCommand
     }
 }
 
