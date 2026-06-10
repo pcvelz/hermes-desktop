@@ -193,6 +193,12 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
         env["HF_HUB_OFFLINE"] = "1"
         env["TRANSFORMERS_OFFLINE"] = "1"
 
+        // Embedded TUIs only: stop the Hermes Ink TUI from opening clicked URLs
+        // in the default browser. Mouse tracking forwards the click a user makes
+        // to focus the Desktop window into the TUI, so a plain click landing on a
+        // link cell would pop a browser tab (entry.tsx honours this knob).
+        env["HERMES_TUI_NO_CLICK_OPEN"] = "1"
+
         let bgColor = terminalTheme.resolvedAppearance.backgroundColor
         let hexBg = bgColor.hexString
         env["HERMES_TUI_BACKGROUND"] = hexBg
