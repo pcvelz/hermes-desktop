@@ -143,6 +143,25 @@ struct SSHTransportTests {
     }
 
     @Test
+    func remoteFailureMentionsLocalNetworkPermissionForUnreachableLANHosts() {
+        let transport = SSHTransport(paths: AppPaths())
+        let connection = ConnectionProfile(
+            label: "Home Pi",
+            sshAlias: "hermes-home"
+        ).updated()
+
+        let message = transport.describeRemoteFailure(
+            stdout: "",
+            stderr: "ssh: connect to host 192.168.1.17 port 22: No route to host",
+            exitCode: 255,
+            connection: connection
+        )
+
+        #expect(message.contains("Local Network"))
+        #expect(message.contains("Privacy & Security"))
+    }
+
+    @Test
     func executeJSONFlagsShellStartupNoiseBeforeJSON() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

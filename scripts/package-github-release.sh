@@ -8,6 +8,23 @@ ZIP_PATH="$ROOT_DIR/dist/HermesDesktop.app.zip"
 SHA256_PATH="$ZIP_PATH.sha256"
 MANIFEST_PATH="$ZIP_PATH.manifest.json"
 
+require_clean_release_tree() {
+    if [[ "${HERMES_ALLOW_DIRTY_PACKAGE:-}" == "1" ]]; then
+        echo "warning: packaging with a dirty working tree because HERMES_ALLOW_DIRTY_PACKAGE=1" >&2
+        return
+    fi
+
+    local status
+    status="$(git -C "$ROOT_DIR" status --porcelain --untracked-files=all)"
+    if [[ -n "$status" ]]; then
+        echo "error: refusing to package a release from a dirty working tree." >&2
+        echo "Commit, stash, or discard local changes before running this script." >&2
+        echo >&2
+        printf '%s\n' "$status" >&2
+        exit 1
+    fi
+}
+
 plist_read() {
     local plist_path="$1"
     local key="$2"
@@ -81,6 +98,8 @@ write_release_manifest() {
 
     plutil -convert json -r "$manifest_path"
 }
+
+require_clean_release_tree
 
 "$ROOT_DIR/scripts/build-macos-app.sh"
 

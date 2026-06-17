@@ -278,7 +278,7 @@ final class SSHTransport: @unchecked Sendable {
             return "The SSH connection timed out. Check that the target host is reachable from this Mac and that your SSH route is correct."
         }
         if lowered.contains("no route to host") || lowered.contains("network is unreachable") {
-            return "The SSH target is unreachable from this Mac. Check the hostname, IP address, VPN, or local network path and retry."
+            return "The SSH target is unreachable from this Mac. Check the hostname, IP address, VPN, or local network path and retry. If this host is on your local Wi-Fi/LAN, allow Hermes Desktop in System Settings > Privacy & Security > Local Network."
         }
         if lowered.contains("python3: command not found") ||
             lowered.contains("command not found: python3") ||
