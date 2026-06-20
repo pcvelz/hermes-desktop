@@ -16,7 +16,7 @@ struct FilesView: View {
             VStack(alignment: .leading, spacing: 18) {
                 HermesPageHeader(
                     title: "Files",
-                    subtitle: "Read and edit selected remote files over SSH."
+                    subtitle: "Read and edit files on the active Hermes machine."
                 )
 
                 filesToolbar
@@ -56,7 +56,7 @@ struct FilesView: View {
         } message: {
             Text(L10n.string("Switching away will drop the unsaved edits in the current file."))
         }
-        .alert(L10n.string("Reload from remote and discard local edits?"), isPresented: $showReloadDiscardAlert) {
+        .alert(L10n.string("Reload saved file and discard edits?"), isPresented: $showReloadDiscardAlert) {
             Button(L10n.string("Reload"), role: .destructive) {
                 if let selectedReference {
                     Task {
@@ -66,7 +66,7 @@ struct FilesView: View {
             }
             Button(L10n.string("Cancel"), role: .cancel) {}
         } message: {
-            Text(L10n.string("This will replace the local unsaved changes with the current remote file content."))
+            Text(L10n.string("This will replace your unsaved changes with the currently saved file content."))
         }
         .alert(L10n.string("Remove this bookmark?"), isPresented: $showRemoveBookmarkAlert) {
             Button(L10n.string("Remove"), role: .destructive) {
@@ -79,7 +79,7 @@ struct FilesView: View {
                 bookmarkPendingRemoval = nil
             }
         } message: {
-            Text(L10n.string("The remote file stays untouched."))
+            Text(L10n.string("The saved file stays untouched."))
         }
     }
 
@@ -253,7 +253,7 @@ struct FilesView: View {
                         .foregroundStyle(.secondary)
 
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(L10n.string("No remote files added yet"))
+                        Text(L10n.string("No files added yet"))
                             .font(.subheadline.weight(.semibold))
 
                         Text(L10n.string("Add files you want to revisit."))
@@ -550,7 +550,7 @@ private struct WorkspaceFileEditorPane: View {
                     ContentUnavailableView(
                         L10n.string("Loading file"),
                         systemImage: "doc.text",
-                        description: Text(L10n.string("Reading over SSH."))
+                        description: Text(L10n.string("Reading from the active Hermes machine."))
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -679,7 +679,7 @@ private struct WorkspaceFileBrowserSheet: View {
     private var browserContent: some View {
         Group {
             if appState.isLoadingWorkspaceFileBrowser && appState.workspaceFileBrowserListing == nil {
-                HermesLoadingState(label: "Loading remote files...", minHeight: 300)
+                HermesLoadingState(label: "Loading files...", minHeight: 300)
             } else if let listing = appState.workspaceFileBrowserListing {
                 List {
                     ForEach(listing.entries) { entry in
@@ -696,7 +696,7 @@ private struct WorkspaceFileBrowserSheet: View {
                 ContentUnavailableView(
                     L10n.string("No Directory Loaded"),
                     systemImage: "folder",
-                    description: Text(L10n.string("Enter a remote path to browse files over SSH."))
+                    description: Text(L10n.string("Enter a path to browse files on the active Hermes machine."))
                 )
                 .frame(maxWidth: .infinity, minHeight: 300)
             }

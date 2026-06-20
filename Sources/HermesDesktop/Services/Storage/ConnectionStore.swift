@@ -464,7 +464,29 @@ final class ConnectionStore: ObservableObject {
     private func loadConnections() {
         do {
             let data = try Data(contentsOf: paths.connectionsURL)
-            connections = try decoder.decode([ConnectionProfile].self, from: data)
+            guard let objects = try JSONSerialization.jsonObject(with: data) as? [Any] else {
+                throw DecodingError.typeMismatch(
+                    [ConnectionProfile].self,
+                    DecodingError.Context(codingPath: [], debugDescription: "Expected an array of connection profiles.")
+                )
+            }
+
+            var decodedConnections = [ConnectionProfile]()
+            var skippedCount = 0
+            for object in objects {
+                do {
+                    let itemData = try JSONSerialization.data(withJSONObject: object)
+                    decodedConnections.append(try decoder.decode(ConnectionProfile.self, from: itemData))
+                } catch {
+                    skippedCount += 1
+                }
+            }
+            connections = decodedConnections
+            if skippedCount > 0 {
+                reportPersistenceError(
+                    "Loaded saved connections but skipped \(skippedCount) unrecognized or malformed profile(s). Existing valid connections were preserved."
+                )
+            }
             try? fileManagerSetPrivatePermissions(at: paths.connectionsURL)
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
             connections = []

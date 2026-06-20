@@ -5,6 +5,91 @@ import Testing
 
 struct SSHTransportTests {
     @Test
+    func localExecuteLaunchesNoninteractiveShellAndForwardsStdin() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let runner = RecordingSSHProcessRunner(
+            result: SSHCommandResult(stdout: "ok", stderr: "", exitCode: 0)
+        )
+        let transport = SSHTransport(
+            paths: makeTestAppPaths(root: root),
+            processRunner: runner
+        )
+        let connection = ConnectionProfile(kind: .local, label: "This Mac").updated()
+        let input = Data("payload".utf8)
+        let command = connection.remoteServiceCommand("python3 -")
+
+        _ = try await transport.execute(
+            on: connection,
+            remoteCommand: command,
+            standardInput: input,
+            allocateTTY: false
+        )
+
+        let invocation = try #require(await runner.lastInvocation)
+        #expect(invocation.executableURL.path == "/bin/sh")
+        #expect(invocation.arguments == ["-c", command])
+        #expect(invocation.standardInput == input)
+    }
+
+    @Test
+    func terminalLaunchSupportsLocalNamedAndCustomProfilesWithoutChangingSSHLaunch() {
+        let transport = SSHTransport(paths: AppPaths())
+        let ssh = ConnectionProfile(label: "Prod", sshHost: "example.com").updated()
+        let localNamed = ConnectionProfile(
+            kind: .local,
+            label: "Research",
+            hermesProfile: "research"
+        ).updated()
+        let localCustom = ConnectionProfile(
+            kind: .local,
+            label: "Custom",
+            customHermesHomePath: "~/.hermes-work"
+        ).updated()
+
+        let sshLaunch = transport.terminalLaunch(for: ssh)
+        #expect(sshLaunch.executablePath == "/usr/bin/ssh")
+        #expect(sshLaunch.arguments == transport.shellArguments(for: ssh))
+        #expect(sshLaunch.executableName == "ssh")
+        #expect(sshLaunch.environment == ["TERM=xterm-256color", "COLORTERM=truecolor"])
+
+        let namedLaunch = transport.terminalLaunch(for: localNamed, startupCommandLine: "hermes --version")
+        #expect(namedLaunch.executablePath == "/bin/sh")
+        #expect(namedLaunch.arguments == ["-c", localNamed.remoteShellBootstrapCommand(startupCommandLine: "hermes --version")])
+        #expect(namedLaunch.arguments[1].contains("$HOME/.hermes/profiles/research"))
+
+        let customLaunch = transport.terminalLaunch(for: localCustom)
+        #expect(customLaunch.arguments[1].contains("$HOME/.hermes-work"))
+    }
+
+    @Test
+    func sshFailureMessagesAndValidationPathRemainExact() throws {
+        let transport = SSHTransport(paths: AppPaths())
+        let connection = ConnectionProfile(label: "Prod", sshHost: "example.com").updated()
+        let result = SSHCommandResult(
+            stdout: "",
+            stderr: "Permission denied (publickey).",
+            exitCode: 255
+        )
+        let expected = "SSH authentication failed. Verify the key, SSH agent, and user for this SSH target."
+
+        #expect(transport.describeRemoteFailure(
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode: result.exitCode,
+            connection: connection
+        ) == expected)
+
+        do {
+            try transport.validateSuccessfulExit(result, for: connection)
+            Issue.record("Expected SSH validation failure")
+        } catch let error as SSHTransportError {
+            #expect(error.errorDescription == expected)
+        }
+    }
+
+    @Test
     func serviceArgumentsUseControlSocketAndExplicitDestination() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -140,6 +225,25 @@ struct SSHTransportTests {
 
         #expect(message.contains("non-interactive SSH shell PATH"))
         #expect(message.contains("python3"))
+    }
+
+    @Test
+    func remoteFailureMentionsLocalNetworkPermissionForUnreachableLANHosts() {
+        let transport = SSHTransport(paths: AppPaths())
+        let connection = ConnectionProfile(
+            label: "Home Pi",
+            sshAlias: "hermes-home"
+        ).updated()
+
+        let message = transport.describeRemoteFailure(
+            stdout: "",
+            stderr: "ssh: connect to host 192.168.1.17 port 22: No route to host",
+            exitCode: 255,
+            connection: connection
+        )
+
+        #expect(message.contains("Local Network"))
+        #expect(message.contains("Privacy & Security"))
     }
 
     @Test

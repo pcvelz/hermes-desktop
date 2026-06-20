@@ -4,8 +4,7 @@ import Foundation
 @MainActor
 final class TerminalSession: ObservableObject, @unchecked Sendable {
     let connection: ConnectionProfile
-    let sshArguments: [String]
-    let localShellEnvironment: [String]
+    let processLaunch: ProcessLaunch
     let startupInput: String?
     let startupCommandLine: String?
     let exitAfterStartupCommand: Bool
@@ -38,18 +37,31 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
         self.workflowLaunchDiagnosticsContext = workflowLaunchDiagnosticsContext
 
         if connection.isLocal {
-            self.sshArguments = []
-            self.localShellEnvironment = TerminalSession.buildLocalEnvironment(
-                hermesHomeExpression: connection.remoteHermesHomeShellExpression,
-                searchPathExpression: connection.remoteHermesSearchPathShellExpression,
-                terminalTheme: terminalTheme
+            // Local PTY: a `$SHELL` login shell carrying our full Hermes-aware
+            // environment (HERMES_HOME, search PATH, offline-STT, TUI knobs, theme).
+            // This keeps our local-transport / exit-after-startup / no-click-open /
+            // theme-injection patches rather than upstream's bare `/bin/sh -c`
+            // bootstrap, while still flowing through upstream's unified ProcessLaunch.
+            let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+            self.processLaunch = ProcessLaunch(
+                executablePath: shell,
+                arguments: TerminalSession.localShellArguments(
+                    shell: shell,
+                    startupCommandLine: startupCommandLine,
+                    exitAfterStartupCommand: exitAfterStartupCommand
+                ),
+                executableName: (shell as NSString).lastPathComponent,
+                environment: TerminalSession.buildLocalEnvironment(
+                    hermesHomeExpression: connection.remoteHermesHomeShellExpression,
+                    searchPathExpression: connection.remoteHermesSearchPathShellExpression,
+                    terminalTheme: terminalTheme
+                )
             )
         } else {
-            self.sshArguments = sshTransport.shellArguments(
+            self.processLaunch = sshTransport.terminalLaunch(
                 for: connection,
                 startupCommandLine: startupCommandLine
             )
-            self.localShellEnvironment = []
         }
 
         self.terminalTitle = "\(connection.label) · \(connection.resolvedHermesProfileName)"
@@ -131,16 +143,31 @@ final class TerminalSession: ObservableObject, @unchecked Sendable {
 
     private func makeLaunchRequest() -> TerminalLaunchRequest {
         TerminalLaunchRequest(
-            sshArguments: sshArguments,
+            processLaunch: processLaunch,
             launchToken: launchToken,
             initialInput: startupInput,
             workflowLaunchDiagnostics: workflowLaunchDiagnostics,
-            workflowLaunchDiagnosticsContext: workflowLaunchDiagnosticsContext,
-            isLocal: connection.isLocal,
-            localShellEnvironment: localShellEnvironment,
-            startupCommandLine: startupCommandLine,
-            exitAfterStartupCommand: exitAfterStartupCommand
+            workflowLaunchDiagnosticsContext: workflowLaunchDiagnosticsContext
         )
+    }
+
+    /// Login-shell arguments for a local PTY. Mirrors the SSH `remoteShellBootstrapCommand`
+    /// behaviour but preserves our exit-after-startup patch: when `exitAfterStartupCommand`
+    /// is set the shell runs the startup command and exits (so `isRunning` tracks the Hermes
+    /// TUI), otherwise it exec's a persistent login shell afterwards.
+    private static func localShellArguments(
+        shell: String,
+        startupCommandLine: String?,
+        exitAfterStartupCommand: Bool
+    ) -> [String] {
+        if let startup = startupCommandLine,
+           !startup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if exitAfterStartupCommand {
+                return ["-lc", startup]
+            }
+            return ["-lc", "\(startup); exec \(shell) -l"]
+        }
+        return ["-l"]
     }
 
     func unmount(from container: TerminalMountContainerView) {

@@ -66,7 +66,7 @@ struct KanbanView: View {
             }
             Button(L10n.string("Cancel"), role: .cancel) {}
         } message: { board in
-            Text(L10n.string("“%@” will be moved out of the active board list. Existing task data stays recoverable on the remote host.", board.resolvedName))
+            Text(boardArchiveConfirmation(board))
         }
     }
 
@@ -74,7 +74,7 @@ struct KanbanView: View {
         VStack(alignment: .leading, spacing: 18) {
             HermesPageHeader(
                 title: "Kanban",
-                subtitle: "Inspect and operate Hermes Kanban projects over SSH."
+                subtitle: "Inspect and operate real Hermes Kanban projects."
             ) {
                 HermesExpandableSearchField(
                     text: $searchText,
@@ -354,7 +354,7 @@ struct KanbanView: View {
                     ContentUnavailableView(
                         L10n.string("No Kanban board yet"),
                         systemImage: "rectangle.3.group",
-                        description: Text(L10n.string("No Kanban database exists at %@. Create the first task to initialize this board on the remote host.", board.databasePath))
+                        description: Text(noKanbanDatabaseDescription(board))
                     )
                     .frame(maxWidth: .infinity, minHeight: 260)
 
@@ -493,6 +493,7 @@ struct KanbanView: View {
             )
         } else {
             KanbanTaskDetailView(
+                connectionKind: appState.activeConnection?.kind ?? .ssh,
                 task: selectedTask,
                 detail: appState.selectedKanbanTaskDetail,
                 errorMessage: appState.kanbanError,
@@ -573,6 +574,32 @@ struct KanbanView: View {
                 }
             )
         }
+    }
+
+    private func boardArchiveConfirmation(_ board: KanbanProject) -> String {
+        if appState.activeConnection?.kind == .local {
+            return L10n.string(
+                "“%@” will be moved out of the active board list. Existing task data stays recoverable in this Mac’s real Hermes data.",
+                board.resolvedName
+            )
+        }
+        return L10n.string(
+            "“%@” will be moved out of the active board list. Existing task data stays recoverable on the remote host.",
+            board.resolvedName
+        )
+    }
+
+    private func noKanbanDatabaseDescription(_ board: KanbanBoard) -> String {
+        if appState.activeConnection?.kind == .local {
+            return L10n.string(
+                "No Kanban database exists at %@. Create the first task to initialize this board on this Mac.",
+                board.databasePath
+            )
+        }
+        return L10n.string(
+            "No Kanban database exists at %@. Create the first task to initialize this board on the remote host.",
+            board.databasePath
+        )
     }
 
     private var filteredTasks: [KanbanTask] {
@@ -685,7 +712,7 @@ struct KanbanView: View {
     private func boardSubtitle(_ board: KanbanBoard) -> String {
         let boardName = appState.selectedKanbanBoard?.resolvedName ?? selectedBoardTitle
         return L10n.string(
-            "Kanban board %@ at %@. SSH-native; active profile is the operator.",
+            "Kanban board %@ at %@. The active profile is the operator.",
             boardName,
             board.databasePath
         )
@@ -694,7 +721,7 @@ struct KanbanView: View {
     private func dispatcherWarning(for board: KanbanBoard) -> String? {
         guard board.tasks.contains(where: { $0.status == .ready }) else { return nil }
         guard board.dispatcher?.isKnownInactive == true else { return nil }
-        return board.dispatcher?.message ?? "Ready tasks are waiting, but the remote Hermes dispatcher does not appear to be active."
+        return board.dispatcher?.message ?? "Ready tasks are waiting, but the Hermes dispatcher does not appear to be active."
     }
 
     private func selectTask(_ task: KanbanTask) {
@@ -1115,7 +1142,7 @@ private struct KanbanBoardEditorView: View {
                                 .font(.title3)
                                 .fontWeight(.semibold)
 
-                            Text(L10n.string("The board will be created on the active Hermes host over SSH."))
+                            Text(L10n.string("The board will be created on the active Hermes machine."))
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
@@ -1177,7 +1204,7 @@ private struct KanbanBoardEditorView: View {
                                 }
                         }
 
-                        Toggle(L10n.string("Make remote current board"), isOn: $draft.switchAfterCreate)
+                        Toggle(L10n.string("Make current board"), isOn: $draft.switchAfterCreate)
                             .toggleStyle(.checkbox)
                     }
                 }
@@ -1206,7 +1233,7 @@ private struct KanbanTaskEditorView: View {
                                 .font(.title3)
                                 .fontWeight(.semibold)
 
-                            Text(L10n.string("The task will be created in the selected Hermes Kanban board over SSH."))
+                            Text(L10n.string("The task will be created in the selected real Hermes Kanban board."))
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
@@ -1323,6 +1350,7 @@ private struct KanbanTaskEditorView: View {
 }
 
 private struct KanbanTaskDetailView: View {
+    let connectionKind: ConnectionKind
     let task: KanbanTask?
     let detail: KanbanTaskDetail?
     let errorMessage: String?
@@ -1373,7 +1401,7 @@ private struct KanbanTaskDetailView: View {
                         if let body = task.trimmedBody {
                             HermesSurfacePanel(
                                 title: "Body",
-                                subtitle: "Task description stored on the remote board."
+                                subtitle: "Task description stored on this board."
                             ) {
                                 HermesInsetSurface {
                                     Text(body)
@@ -1455,8 +1483,21 @@ private struct KanbanTaskDetailView: View {
             }
             Button(L10n.string("Cancel"), role: .cancel) {}
         } message: { task in
-            Text(L10n.string("“%@” will be permanently removed from the remote Kanban database, including comments, links, events, and run history. Remote workspace files are left untouched.", task.resolvedTitle))
+            Text(taskDeleteConfirmation(task))
         }
+    }
+
+    private func taskDeleteConfirmation(_ task: KanbanTask) -> String {
+        if connectionKind == .local {
+            return L10n.string(
+                "“%@” will be permanently removed from this Mac’s real Hermes Kanban database, including comments, links, events, and run history. Workspace files on this Mac are left untouched.",
+                task.resolvedTitle
+            )
+        }
+        return L10n.string(
+            "“%@” will be permanently removed from the remote Kanban database, including comments, links, events, and run history. Remote workspace files are left untouched.",
+            task.resolvedTitle
+        )
     }
 
     private func resetDraft() {
@@ -1594,7 +1635,9 @@ private struct KanbanTaskDetailView: View {
     private func metadataPanel(_ task: KanbanTask) -> some View {
         HermesSurfacePanel(
             title: "Details",
-            subtitle: "Board metadata from the remote host."
+            subtitle: connectionKind == .local
+                ? "Board metadata from this Mac’s real Hermes data."
+                : "Board metadata from the remote host."
         ) {
             HermesInspectorFieldList(fields: metadataFields(for: task))
 
@@ -2285,7 +2328,7 @@ private struct KanbanTaskDetailView: View {
         if let log = detail.workerLog?.trimmingCharacters(in: .whitespacesAndNewlines), !log.isEmpty {
             HermesSurfacePanel(
                 title: "Worker Log",
-                subtitle: "Tail of the remote worker log for this task."
+                subtitle: "Tail of the worker log for this task."
             ) {
                 HermesInsetSurface {
                     Text(log)

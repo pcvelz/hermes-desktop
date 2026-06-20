@@ -1,9 +1,16 @@
 import Foundation
 
+enum ConnectionKind: String, Codable, CaseIterable, Identifiable {
+    case ssh
+    case local
+
+    var id: String { rawValue }
+}
+
 struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     var id: UUID
+    var kind: ConnectionKind
     var label: String
-    var isLocal: Bool
     var sshAlias: String
     var sshHost: String
     var sshPort: Int?
@@ -14,8 +21,18 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     var updatedAt: Date
     var lastConnectedAt: Date?
 
-    enum CodingKeys: String, CodingKey {
+    // `kind` is the single source of truth for local-vs-SSH. `isLocal` is kept as a
+    // convenience bridge for our local-transport patch call sites (SSHTransport,
+    // TerminalViewHost, ConnectionEditorSheet, ControlServer) so the upstream `kind`
+    // enum and our `isLocal` flag can never drift apart.
+    var isLocal: Bool {
+        get { kind == .local }
+        set { kind = newValue ? .local : .ssh }
+    }
+
+    private enum CodingKeys: String, CodingKey {
         case id
+        case kind
         case label
         case isLocal
         case sshAlias
@@ -31,6 +48,7 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
 
     init(
         id: UUID = UUID(),
+        kind: ConnectionKind = .ssh,
         label: String = "",
         isLocal: Bool = false,
         sshAlias: String = "",
@@ -44,8 +62,9 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
         lastConnectedAt: Date? = nil
     ) {
         self.id = id
+        // Honour either spelling at construction time; `isLocal` upgrades `kind` to `.local`.
+        self.kind = isLocal ? .local : kind
         self.label = label
-        self.isLocal = isLocal
         self.sshAlias = sshAlias
         self.sshHost = sshHost
         self.sshPort = sshPort
@@ -60,8 +79,16 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
+        // Prefer upstream's `kind`; fall back to our legacy `isLocal` flag for
+        // profiles persisted before the `kind` enum existed.
+        if let decodedKind = try container.decodeIfPresent(ConnectionKind.self, forKey: .kind) {
+            kind = decodedKind
+        } else if try container.decodeIfPresent(Bool.self, forKey: .isLocal) == true {
+            kind = .local
+        } else {
+            kind = .ssh
+        }
         label = try container.decode(String.self, forKey: .label)
-        isLocal = try container.decodeIfPresent(Bool.self, forKey: .isLocal) ?? false
         sshAlias = try container.decodeIfPresent(String.self, forKey: .sshAlias) ?? ""
         sshHost = try container.decodeIfPresent(String.self, forKey: .sshHost) ?? ""
         sshPort = try container.decodeIfPresent(Int.self, forKey: .sshPort)
@@ -71,6 +98,24 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         lastConnectedAt = try container.decodeIfPresent(Date.self, forKey: .lastConnectedAt)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(kind, forKey: .kind)
+        // Mirror the legacy flag so older readers still detect local connections.
+        try container.encode(isLocal, forKey: .isLocal)
+        try container.encode(label, forKey: .label)
+        try container.encode(sshAlias, forKey: .sshAlias)
+        try container.encode(sshHost, forKey: .sshHost)
+        try container.encodeIfPresent(sshPort, forKey: .sshPort)
+        try container.encode(sshUser, forKey: .sshUser)
+        try container.encodeIfPresent(hermesProfile, forKey: .hermesProfile)
+        try container.encodeIfPresent(customHermesHomePath, forKey: .customHermesHomePath)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encodeIfPresent(lastConnectedAt, forKey: .lastConnectedAt)
     }
 
     var trimmedAlias: String? {
@@ -236,8 +281,8 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     }
 
     var workspaceScopeFingerprint: String {
-        if isLocal {
-            return ["local", "", "", remoteHermesHomePath].joined(separator: "|")
+        if kind == .local {
+            return "\(localConnectionIdentity)|\(remoteHermesHomePath)"
         }
         return [
             effectiveTarget,
@@ -248,7 +293,10 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     }
 
     var hostConnectionFingerprint: String {
-        [
+        if kind == .local {
+            return localConnectionIdentity
+        }
+        return [
             effectiveTarget,
             trimmedUser ?? "",
             resolvedPort.map(String.init) ?? ""
@@ -256,8 +304,14 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     }
 
     var effectiveTarget: String {
-        if isLocal { return "localhost" }
+        if kind == .local {
+            return "This Mac"
+        }
         return trimmedAlias ?? trimmedHost ?? ""
+    }
+
+    var localConnectionIdentity: String {
+        "local:v1"
     }
 
     var usesAliasSourceOfTruth: Bool {
@@ -273,11 +327,17 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     }
 
     var displayDestination: String {
-        if isLocal { return "this machine (local)" }
+        if kind == .local {
+            return "This Mac"
+        }
         guard let user = trimmedUser else {
             return effectiveTarget
         }
         return "\(user)@\(effectiveTarget)"
+    }
+
+    var localizedDisplayDestination: String {
+        kind == .local ? L10n.string("This Mac") : displayDestination
     }
 
     var isValid: Bool {
@@ -289,7 +349,11 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
             return "Name is required."
         }
 
-        return sshValidationError
+        if kind == .ssh, let sshValidationError {
+            return sshValidationError
+        }
+
+        return hermesWorkspaceValidationError
     }
 
     var sshValidationError: String? {
@@ -311,6 +375,10 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
             return error
         }
 
+        return hermesWorkspaceValidationError
+    }
+
+    private var hermesWorkspaceValidationError: String? {
         if trimmedHermesProfile != nil && trimmedCustomHermesHomePath != nil {
             return "Choose either a Hermes profile or a custom Hermes home path."
         }

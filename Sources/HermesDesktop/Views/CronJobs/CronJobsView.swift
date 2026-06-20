@@ -60,10 +60,7 @@ struct CronJobsView: View {
             Button(L10n.string("Cancel"), role: .cancel) {}
         } message: {
             if let jobToDelete {
-                Text(L10n.string(
-                    "“%@” will be removed from the remote Hermes scheduler. This cannot be undone.",
-                    jobToDelete.resolvedName
-                ))
+                Text(cronDeleteConfirmation(jobToDelete))
             }
         }
     }
@@ -112,7 +109,7 @@ struct CronJobsView: View {
                 ContentUnavailableView(
                     "No cron jobs found",
                     systemImage: "calendar.badge.exclamationmark",
-                    description: Text(L10n.string("No saved Hermes cron jobs were discovered under %@ on this SSH target.", cronJobsPath))
+                    description: Text(noCronJobsDescription)
                 )
                 .frame(maxWidth: .infinity, minHeight: 300)
             }
@@ -162,6 +159,26 @@ struct CronJobsView: View {
                 }
             }
         }
+    }
+
+    private var noCronJobsDescription: String {
+        if appState.activeConnection?.kind == .local {
+            return L10n.string("No saved Hermes cron jobs were discovered under %@ on this Mac.", cronJobsPath)
+        }
+        return L10n.string("No saved Hermes cron jobs were discovered under %@ on this SSH target.", cronJobsPath)
+    }
+
+    private func cronDeleteConfirmation(_ job: CronJob) -> String {
+        if appState.activeConnection?.kind == .local {
+            return L10n.string(
+                "“%@” will be removed from this Mac’s real Hermes scheduler using your current macOS account. This cannot be undone.",
+                job.resolvedName
+            )
+        }
+        return L10n.string(
+            "“%@” will be removed from the remote Hermes scheduler. This cannot be undone.",
+            job.resolvedName
+        )
     }
 
     @ViewBuilder

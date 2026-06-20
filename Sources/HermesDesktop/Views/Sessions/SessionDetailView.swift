@@ -125,10 +125,7 @@ struct SessionDetailView: View {
             }
             Button(L10n.string("Cancel"), role: .cancel) {}
         } message: { session in
-            Text(L10n.string(
-                "“%@” will be removed from Hermes Desktop and deleted on the remote Hermes host as well. This action cannot be undone.",
-                session.resolvedTitle
-            ))
+            Text(sessionDeleteConfirmation(session))
         }
     }
 
@@ -221,9 +218,9 @@ struct SessionDetailView: View {
 
     private var newChatSubtitle: String {
         guard let connection else {
-            return L10n.string("Select an SSH host to start a live Hermes TUI.")
+            return L10n.string("Select a Hermes connection to start a live Hermes TUI.")
         }
-        return "\(connection.label) - \(connection.displayDestination) - \(connection.resolvedHermesProfileName)"
+        return "\(connection.label) - \(connection.localizedDisplayDestination) - \(connection.resolvedHermesProfileName)"
     }
 
     private var transcriptMode: some View {
@@ -431,9 +428,28 @@ struct SessionDetailView: View {
             return L10n.string("%@ is active. Start a new embedded TUI when you are ready to switch.", terminal.targetLabel)
         }
         if let session {
+            if connection?.kind == .local {
+                return L10n.string("Hermes TUI will resume %@ in a local terminal on this Mac.", shortSessionID(session.id))
+            }
             return L10n.string("Hermes TUI will resume %@ over the existing SSH-first terminal path.", shortSessionID(session.id))
         }
+        if connection?.kind == .local {
+            return L10n.string("Hermes TUI will create the next session in this Mac’s real Hermes data; refresh Sessions after it exits or when you return to Transcript.")
+        }
         return L10n.string("Hermes TUI will create the next session on the host; refresh Sessions after it exits or when you return to Transcript.")
+    }
+
+    private func sessionDeleteConfirmation(_ session: SessionSummary) -> String {
+        if connection?.kind == .local {
+            return L10n.string(
+                "“%@” will be permanently deleted from this Mac’s real Hermes data using your current macOS account. This action cannot be undone.",
+                session.resolvedTitle
+            )
+        }
+        return L10n.string(
+            "“%@” will be removed from Hermes Desktop and deleted on the remote Hermes host as well. This action cannot be undone.",
+            session.resolvedTitle
+        )
     }
 
     private var startChatButtonTitle: String {

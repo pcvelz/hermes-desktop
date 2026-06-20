@@ -4,6 +4,93 @@ import Testing
 
 struct ConnectionProfileTests {
     @Test
+    func legacyProfileWithoutKindDecodesAsSSH() throws {
+        let payload = """
+        {
+          "id": "8B1B94EA-7A4E-4FA5-9E63-B41329EE213B",
+          "label": "Legacy Production",
+          "sshAlias": "hermes-prod",
+          "sshHost": "prod.example.com",
+          "sshPort": 2222,
+          "sshUser": "alice",
+          "hermesProfile": "research",
+          "customHermesHomePath": null,
+          "createdAt": 721692800,
+          "updatedAt": 721692900,
+          "lastConnectedAt": null
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .deferredToDate
+        let decoded = try decoder.decode(ConnectionProfile.self, from: Data(payload.utf8))
+
+        #expect(decoded.kind == .ssh)
+        #expect(decoded.label == "Legacy Production")
+        #expect(decoded.sshAlias == "hermes-prod")
+        #expect(decoded.sshHost == "prod.example.com")
+        #expect(decoded.sshPort == 2222)
+        #expect(decoded.sshUser == "alice")
+        #expect(decoded.hermesProfile == "research")
+        #expect(decoded.customHermesHomePath == nil)
+        #expect(decoded.lastConnectedAt == nil)
+        #expect(decoded.hostConnectionFingerprint == "hermes-prod|alice|2222")
+        #expect(decoded.workspaceScopeFingerprint == "hermes-prod|alice|2222|~/.hermes/profiles/research")
+    }
+
+    @Test
+    func localValidationAndFingerprintsAreExplicitAndSeparateFromSSH() {
+        let ssh = ConnectionProfile(
+            label: "SSH Localhost",
+            sshHost: "localhost",
+            sshUser: "alice"
+        ).updated()
+        let local = ConnectionProfile(
+            kind: .local,
+            label: "This Mac",
+            sshHost: "should-not-run",
+            sshUser: "ignored",
+            hermesProfile: "research"
+        ).updated()
+
+        #expect(ssh.hostConnectionFingerprint == "localhost|alice|")
+        #expect(ssh.workspaceScopeFingerprint == "localhost|alice||~/.hermes")
+        #expect(local.isValid)
+        #expect(local.sshHost == "should-not-run")
+        #expect(local.sshUser == "ignored")
+        #expect(local.hostConnectionFingerprint == "local:v1")
+        #expect(local.workspaceScopeFingerprint == "local:v1|~/.hermes/profiles/research")
+        #expect(local.workspaceScopeFingerprint.hasSuffix("|~/.hermes/profiles/research"))
+        #expect(local.hostConnectionFingerprint != ssh.hostConnectionFingerprint)
+        #expect(local.workspaceScopeFingerprint != ssh.workspaceScopeFingerprint)
+    }
+
+    @Test
+    func switchingConnectionKindsPreservesInactiveSSHDraftValuesWithoutExecutionLeakage() {
+        var profile = ConnectionProfile(
+            label: "Studio",
+            sshAlias: "studio",
+            sshHost: "studio.local",
+            sshPort: 2222,
+            sshUser: "alice"
+        )
+        profile.kind = .local
+        let normalizedLocal = profile.updated()
+
+        #expect(normalizedLocal.isValid)
+        #expect(normalizedLocal.effectiveTarget == "This Mac")
+        #expect(normalizedLocal.displayDestination == "This Mac")
+        #expect(normalizedLocal.localizedDisplayDestination == L10n.string("This Mac"))
+        #expect(normalizedLocal.sshAlias == "studio")
+        #expect(normalizedLocal.sshHost == "studio.local")
+        #expect(normalizedLocal.sshPort == 2222)
+        #expect(normalizedLocal.sshUser == "alice")
+
+        profile.kind = .ssh
+        #expect(profile.updated().effectiveTarget == "studio")
+        #expect(profile.updated().displayDestination == "alice@studio")
+    }
+
+    @Test
     func defaultProfileUsesCanonicalPathsAndAliasDrivenDefaults() {
         let profile = ConnectionProfile(
             label: "  Home  ",

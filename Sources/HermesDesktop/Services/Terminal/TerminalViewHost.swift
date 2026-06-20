@@ -134,11 +134,15 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
         initialInputTask?.cancel()
         initialInputTask = nil
 
-        if request.isLocal {
-            startLocalProcess(for: request)
-        } else {
-            startSSHProcess(for: request)
-        }
+        // Single unified launch path (upstream). Local-vs-SSH selection — and our
+        // local-transport / theme / offline-STT / exit-after-startup customisations —
+        // are all baked into `request.processLaunch` by TerminalSession.
+        hostView.terminalView.startProcess(
+            executable: request.processLaunch.executablePath,
+            args: request.processLaunch.arguments,
+            environment: request.processLaunch.environment,
+            execName: request.processLaunch.executableName
+        )
 
         onProcessStart?()
         if let workflowLaunchDiagnosticsContext = request.workflowLaunchDiagnosticsContext {
@@ -147,41 +151,6 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
             }
         }
         deliverInitialInputIfNeeded(for: request)
-    }
-
-    private func startSSHProcess(for request: TerminalLaunchRequest) {
-        let environment = [
-            "TERM=xterm-256color",
-            "COLORTERM=truecolor"
-        ]
-
-        hostView.terminalView.startProcess(
-            executable: "/usr/bin/ssh",
-            args: request.sshArguments,
-            environment: environment,
-            execName: "ssh"
-        )
-    }
-
-    private func startLocalProcess(for request: TerminalLaunchRequest) {
-        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        let args: [String]
-        if let startup = request.startupCommandLine,
-           !startup.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            if request.exitAfterStartupCommand {
-                args = ["-lc", startup]
-            } else {
-                args = ["-lc", "\(startup); exec \(shell) -l"]
-            }
-        } else {
-            args = ["-l"]
-        }
-        hostView.terminalView.startProcess(
-            executable: shell,
-            args: args,
-            environment: request.localShellEnvironment,
-            execName: (shell as NSString).lastPathComponent
-        )
     }
 
     /// Resize the terminal emulator to the given column/row count.
@@ -312,43 +281,24 @@ final class TerminalViewHost: NSObject, LocalProcessTerminalViewDelegate {
 }
 
 struct TerminalLaunchRequest {
-    let sshArguments: [String]
+    let processLaunch: ProcessLaunch
     let launchToken: UUID
     let initialInput: String?
     let workflowLaunchDiagnostics: WorkflowLaunchDiagnostics
     let workflowLaunchDiagnosticsContext: WorkflowLaunchDiagnosticsContext?
 
-    // Local-transport fields (isLocal == true).
-    // When set, the terminal launches a local login shell instead of SSH.
-    let isLocal: Bool
-    let localShellEnvironment: [String]
-    let startupCommandLine: String?
-    /// When true, the PTY shell exits as soon as `startupCommandLine` finishes,
-    /// instead of exec-ing a persistent login shell afterward.  Only set for
-    /// session-chat TUI terminals so that `TerminalSession.isRunning` reflects
-    /// whether the Hermes TUI is actually alive.
-    let exitAfterStartupCommand: Bool
-
     init(
-        sshArguments: [String],
+        processLaunch: ProcessLaunch,
         launchToken: UUID,
         initialInput: String?,
         workflowLaunchDiagnostics: WorkflowLaunchDiagnostics,
-        workflowLaunchDiagnosticsContext: WorkflowLaunchDiagnosticsContext?,
-        isLocal: Bool = false,
-        localShellEnvironment: [String] = [],
-        startupCommandLine: String? = nil,
-        exitAfterStartupCommand: Bool = false
+        workflowLaunchDiagnosticsContext: WorkflowLaunchDiagnosticsContext?
     ) {
-        self.sshArguments = sshArguments
+        self.processLaunch = processLaunch
         self.launchToken = launchToken
         self.initialInput = initialInput
         self.workflowLaunchDiagnostics = workflowLaunchDiagnostics
         self.workflowLaunchDiagnosticsContext = workflowLaunchDiagnosticsContext
-        self.isLocal = isLocal
-        self.localShellEnvironment = localShellEnvironment
-        self.startupCommandLine = startupCommandLine
-        self.exitAfterStartupCommand = exitAfterStartupCommand
     }
 }
 

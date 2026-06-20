@@ -15,7 +15,7 @@ struct WorkflowsView: View {
             VStack(alignment: .leading, spacing: 18) {
                 HermesPageHeader(
                     title: "Workflows",
-                    subtitle: "Create reusable prompt presets that open in a fresh Terminal tab on the active host."
+                    subtitle: "Create reusable prompt presets that open in a fresh Terminal tab on the active connection."
                 ) {
                     HermesExpandableSearchField(
                         text: $searchText,
@@ -124,6 +124,7 @@ struct WorkflowsView: View {
     private var detailContent: some View {
         if let editorMode {
             WorkflowEditorView(
+                connectionKind: appState.activeConnection?.kind ?? .ssh,
                 mode: editorMode,
                 draft: $editorDraft,
                 availableSkills: appState.skills,
@@ -467,6 +468,7 @@ private struct WorkflowDetailView: View {
 }
 
 private struct WorkflowEditorView: View {
+    let connectionKind: ConnectionKind
     let mode: WorkflowEditorMode
     @Binding var draft: WorkflowDraft
     let availableSkills: [SkillSummary]
@@ -484,7 +486,11 @@ private struct WorkflowEditorView: View {
                         Text(L10n.string(mode.title))
                             .font(.title2.weight(.semibold))
 
-                        Text(L10n.string("Workflows stay local to this Mac and launch a fresh remote Terminal tab when run."))
+                        Text(L10n.string(
+                            connectionKind == .local
+                                ? "Workflows stay local to this Mac and launch a fresh local Terminal tab when run."
+                                : "Workflows stay local to this Mac and launch a fresh remote Terminal tab when run."
+                        ))
                             .font(.callout)
                             .foregroundStyle(.secondary)
 

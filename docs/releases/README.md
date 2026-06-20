@@ -14,3 +14,10 @@ root focused on the app, packaging, and trust-facing docs.
 - Once the final tag exists, prefer packaging from that tagged commit without
   version overrides so the app bundle, manifest, checksum, and release page all
   describe the same build.
+- Create the annotated release tag only after the release commit is on `main`
+  and the `main` CI run is green.
+- Push the tag, require the tag-triggered macOS CI packaging and verification
+  job to pass, then publish the GitHub Release from that exact tag.
+- Attach all three verified assets: `HermesDesktop.app.zip`,
+  `HermesDesktop.app.zip.sha256`, and
+  `HermesDesktop.app.zip.manifest.json`.

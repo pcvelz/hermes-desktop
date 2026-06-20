@@ -28,6 +28,13 @@ info_read() {
     /usr/libexec/PlistBuddy -c "Print :$key" "$plist_path"
 }
 
+info_read_optional() {
+    local plist_path="$1"
+    local key="$2"
+
+    /usr/libexec/PlistBuddy -c "Print :$key" "$plist_path" 2>/dev/null || true
+}
+
 fail() {
     echo "error: $*" >&2
     exit 1
@@ -100,6 +107,11 @@ assert_equals "bundle version" "$EXPECTED_BUNDLE_VERSION" "$(info_read "$INFO_PL
 assert_equals "bundle build" "$EXPECTED_BUNDLE_BUILD" "$(info_read "$INFO_PLIST_PATH" CFBundleVersion)"
 assert_equals "minimum system version" "$EXPECTED_MINIMUM_SYSTEM_VERSION" "$(info_read "$INFO_PLIST_PATH" LSMinimumSystemVersion)"
 assert_equals "bundle executable" "$EXPECTED_EXECUTABLE_NAME" "$(info_read "$INFO_PLIST_PATH" CFBundleExecutable)"
+
+LOCAL_NETWORK_USAGE_DESCRIPTION="$(info_read_optional "$INFO_PLIST_PATH" NSLocalNetworkUsageDescription)"
+if [[ -z "$LOCAL_NETWORK_USAGE_DESCRIPTION" ]]; then
+    fail "missing NSLocalNetworkUsageDescription; local LAN SSH hosts may be blocked by macOS Local Network privacy"
+fi
 
 read -r -a ACTUAL_ARCHES <<<"$(lipo -archs "$EXECUTABLE_PATH")"
 assert_equals \

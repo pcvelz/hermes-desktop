@@ -6,6 +6,13 @@ struct SSHCommandResult {
     let exitCode: Int32
 }
 
+struct ProcessLaunch: Equatable {
+    let executablePath: String
+    let arguments: [String]
+    let executableName: String
+    let environment: [String]
+}
+
 enum SSHTransportError: LocalizedError, Equatable {
     case invalidConnection(String)
     case launchFailure(String)
@@ -58,6 +65,9 @@ final class SSHTransport: @unchecked Sendable {
         allocateTTY: Bool
     ) async throws -> SSHCommandResult {
         if connection.isLocal {
+            if let validationError = connection.validationError {
+                throw SSHTransportError.invalidConnection(validationError)
+            }
             return try await runLocal(
                 command: remoteCommand,
                 hermesHomeExpression: connection.remoteHermesHomeShellExpression,
@@ -120,7 +130,11 @@ final class SSHTransport: @unchecked Sendable {
         try validateSuccessfulExit(result, for: connection)
 
         guard let data = result.stdout.data(using: .utf8) else {
-            throw SSHTransportError.invalidResponse("Remote output was not valid UTF-8.")
+            throw SSHTransportError.invalidResponse(
+                connection.kind == .local
+                    ? "Local command output was not valid UTF-8."
+                    : "Remote output was not valid UTF-8."
+            )
         }
 
         do {
@@ -130,7 +144,8 @@ final class SSHTransport: @unchecked Sendable {
                 formattedInvalidJSONResponse(
                     stdout: result.stdout,
                     stderr: result.stderr,
-                    decodingError: error
+                    decodingError: error,
+                    isLocal: connection.kind == .local
                 )
             )
         }
@@ -143,6 +158,47 @@ final class SSHTransport: @unchecked Sendable {
             allocateTTY: true,
             purpose: .terminalShell
         )
+    }
+
+    func terminalLaunch(for connection: ConnectionProfile, startupCommandLine: String? = nil) -> ProcessLaunch {
+        if connection.kind == .local {
+            return ProcessLaunch(
+                executablePath: "/bin/sh",
+                arguments: ["-c", connection.remoteShellBootstrapCommand(startupCommandLine: startupCommandLine)],
+                executableName: "sh",
+                environment: localTerminalEnvironment()
+            )
+        }
+
+        return ProcessLaunch(
+            executablePath: "/usr/bin/ssh",
+            arguments: shellArguments(for: connection, startupCommandLine: startupCommandLine),
+            executableName: "ssh",
+            environment: [
+                "TERM=xterm-256color",
+                "COLORTERM=truecolor"
+            ]
+        )
+    }
+
+    private func localTerminalEnvironment() -> [String] {
+        var environment = ProcessInfo.processInfo.environment
+        func nonempty(_ value: String?) -> String? {
+            guard let value, !value.isEmpty else { return nil }
+            return value
+        }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        environment["HOME"] = nonempty(environment["HOME"]) ?? home
+        environment["USER"] = nonempty(environment["USER"]) ?? NSUserName()
+        environment["LOGNAME"] = nonempty(environment["LOGNAME"]) ?? environment["USER"]
+        environment["SHELL"] = nonempty(environment["SHELL"]) ?? "/bin/zsh"
+        environment["PATH"] = nonempty(environment["PATH"])
+            ?? "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        environment["TERM"] = "xterm-256color"
+        environment["COLORTERM"] = "truecolor"
+        return environment
+            .map { "\($0.key)=\($0.value)" }
+            .sorted()
     }
 
     func serviceArguments(
@@ -160,6 +216,15 @@ final class SSHTransport: @unchecked Sendable {
 
     func validateSuccessfulExit(_ result: SSHCommandResult, for connection: ConnectionProfile? = nil) throws {
         guard result.exitCode == 0 else {
+            if connection?.kind == .local {
+                throw SSHTransportError.remoteFailure(
+                    describeLocalFailure(
+                        stdout: result.stdout,
+                        stderr: result.stderr,
+                        exitCode: result.exitCode
+                    )
+                )
+            }
             throw SSHTransportError.remoteFailure(
                 describeRemoteFailure(
                     stdout: result.stdout,
@@ -214,6 +279,20 @@ final class SSHTransport: @unchecked Sendable {
             arguments: ["-c", wrapped],
             standardInput: standardInput
         )
+    }
+
+    private func describeLocalFailure(
+        stdout: String,
+        stderr: String,
+        exitCode: Int32
+    ) -> String {
+        if let structuredError = structuredRemoteError(in: stdout) ?? structuredRemoteError(in: stderr) {
+            return structuredError
+        }
+        let rawMessage = [stderr, stdout]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty })
+        return rawMessage ?? "Local command failed with exit code \(exitCode)."
     }
 
     private func sshArguments(
@@ -318,7 +397,7 @@ final class SSHTransport: @unchecked Sendable {
             return "The SSH connection timed out. Check that the target host is reachable from this Mac and that your SSH route is correct."
         }
         if lowered.contains("no route to host") || lowered.contains("network is unreachable") {
-            return "The SSH target is unreachable from this Mac. Check the hostname, IP address, VPN, or local network path and retry."
+            return "The SSH target is unreachable from this Mac. Check the hostname, IP address, VPN, or local network path and retry. If this host is on your local Wi-Fi/LAN, allow Hermes Desktop in System Settings > Privacy & Security > Local Network."
         }
         if lowered.contains("python3: command not found") ||
             lowered.contains("command not found: python3") ||
@@ -367,13 +446,16 @@ final class SSHTransport: @unchecked Sendable {
     private func formattedInvalidJSONResponse(
         stdout: String,
         stderr: String,
-        decodingError: Error
+        decodingError: Error,
+        isLocal: Bool
     ) -> String {
         let trimmedStdout = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedStderr = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if looksLikeNonJSONShellOutput(trimmedStdout) {
-            let guidance = "Remote command returned non-JSON output. This usually means a shell startup file printed text during a non-interactive SSH command. Keep startup files quiet for non-interactive SSH sessions and retry."
+            let guidance = isLocal
+                ? "Local command returned non-JSON output. This usually means a shell startup file printed text before the expected response. Keep startup files quiet for non-interactive sessions and retry."
+                : "Remote command returned non-JSON output. This usually means a shell startup file printed text during a non-interactive SSH command. Keep startup files quiet for non-interactive SSH sessions and retry."
             let preview = shortenedOutputPreview(trimmedStdout)
             if preview.isEmpty {
                 return guidance

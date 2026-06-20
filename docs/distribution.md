@@ -59,6 +59,37 @@ a way macOS can validate for internal integrity. It does not mean:
 That is why first launch may require right-click `Open`, and why macOS may warn
 that Apple cannot verify the app for malware.
 
+## First Launch And macOS 26.5.1
+
+On most supported macOS versions, right-clicking `HermesDesktop.app`, choosing
+`Open`, and confirming the warning is the normal first-launch path. If needed,
+macOS also provides `Open Anyway` under `System Settings` > `Privacy &
+Security` shortly after a blocked launch.
+
+On some Macs running macOS 26.5.1 (build 25F80), we have observed Gatekeeper
+showing a stronger "is damaged and can't be opened" alert for quarantined,
+ad-hoc signed apps without offering the normal override. The following
+workaround is only for that macOS version and build when that exact alert
+appears.
+
+Before changing the quarantine attribute, verify the downloaded zip against
+`HermesDesktop.app.zip.sha256` attached to the same GitHub Release:
+
+```bash
+shasum -a 256 ~/Downloads/HermesDesktop.app.zip
+```
+
+Do not continue if the result differs from the published checksum. After
+extracting the verified zip and moving the app into Applications, run:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/HermesDesktop.app"
+open "/Applications/HermesDesktop.app"
+```
+
+This removes the browser quarantine from that app bundle only. It does not
+disable Gatekeeper globally and does not require `sudo`.
+
 ## What The Published Checksum Proves
 
 Each release zip includes a SHA-256 checksum and a small JSON manifest.
@@ -123,7 +154,12 @@ That produces a local app bundle in `dist/HermesDesktop.app`.
 This is still an ad-hoc signed, non-notarized bundle, because that is the
 current build and release model in the repo. Building locally does not turn it
 into a notarized distribution, but it does let you trust your own build inputs
-instead of a downloaded zip.
+instead of a downloaded zip. Because the resulting app is produced locally, it
+also does not inherit browser download quarantine. You can launch it directly:
+
+```bash
+open "dist/HermesDesktop.app"
+```
 
 ## What The App Depends On At Runtime
 
@@ -132,13 +168,16 @@ depends on the environment it connects to.
 
 The app assumes:
 
-- your Mac already has a working SSH path to the target host
-- the host already has `python3`
-- the host already has `hermes` on the non-interactive SSH `PATH` for in-app
-  chat and resume flows
+- `python3` is available on the machine where Hermes runs
+- Hermes data lives under `~/.hermes`, a named profile, or the configured
+  custom Hermes home
+- `hermes` is available through the app's prepared PATH for in-app chat,
+  terminal resume, and workflow launches
 
-The app then uses SSH to execute remote commands on that host. See
-[../SECURITY.md](../SECURITY.md) for the runtime security model.
+For direct-local mode, commands run on this Mac with the current macOS user's
+permissions. For SSH mode, your Mac must already have a working
+non-interactive SSH path to the target host. See [../SECURITY.md](../SECURITY.md)
+for the runtime security model.
 
 ## Honest Limitation
 

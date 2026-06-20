@@ -22,7 +22,7 @@ struct TerminalTabContainer: View {
                         }
                     }
 
-                    Text(session.connection.displayDestination)
+                    Text(session.connection.localizedDisplayDestination)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

@@ -1,10 +1,10 @@
 # Security Model
 
-Hermes Desktop is a native macOS client for Hermes that talks directly to the
-selected host over SSH.
+Hermes Desktop is a native macOS client for Hermes that operates directly on
+this Mac or connects to another machine over SSH.
 
-The host stays the source of truth. The app does not introduce a gateway API,
-background daemon, local mirror, or separate sync layer.
+The active Hermes machine stays the source of truth. The app does not introduce
+a gateway API, background daemon, synchronized mirror, or separate sync layer.
 
 This document describes the current implementation in this repository. It is
 not a promise about future packaging, signing, or infrastructure changes.
@@ -16,17 +16,24 @@ Hermes Desktop runs as a normal macOS app on your Mac.
 Local execution includes:
 
 - the app UI and local state handling
-- `/usr/bin/ssh` for all host communication
-- a local embedded terminal session that opens an SSH shell to the selected
-  host
+- direct `/bin/sh` service commands when the connection type is `This Mac`
+- a local embedded terminal when the connection type is `This Mac`
+- `/usr/bin/ssh` and an embedded SSH shell when the connection type is
+  `SSH Host`
 - the built-in update check, which requests the latest Hermes Desktop release
   metadata from the GitHub Releases API
 
 The app does not install a helper service on the host or on your Mac.
 
-## What Executes Remotely Over SSH
+Direct-local commands run with the current macOS user's permissions against
+that account's real Hermes files. The app reuses the same `HERMES_HOME`, named
+profile, custom-home, PATH, Hermes CLI, service, and terminal bootstrap rules
+used for SSH connections.
 
-Hermes Desktop uses SSH to execute commands on the selected host.
+## What Can Execute Remotely Over SSH
+
+For an `SSH Host` connection, Hermes Desktop uses SSH to execute commands on
+the selected host.
 
 Current remote execution includes:
 
@@ -35,7 +42,7 @@ Current remote execution includes:
 - remote shell startup for the embedded terminal
 - remote `hermes` CLI invocations for in-app chat and session resume flows
 
-The app therefore depends on the remote SSH environment you already trust:
+SSH mode therefore depends on the remote SSH environment you already trust:
 
 - SSH access must already work from Terminal on your Mac
 - `python3` must exist on the host for service-style RPC requests
@@ -51,12 +58,12 @@ Hermes Desktop stores a small amount of local state under:
 Current files written there include:
 
 - `connections.json`
-  Saved connection definitions such as label, SSH alias or host, user, port,
-  and selected Hermes profile
+  Saved connection definitions including connection type, label, SSH routing
+  fields when applicable, and the selected Hermes profile or custom home
 - `preferences.json`
   App preferences and lightweight workspace state such as last-used
   connection, terminal theme and font preferences, app appearance preference,
-  background image metadata, update-check preference, bookmarked remote files,
+  background image metadata, update-check preference, bookmarked Hermes files,
   pinned sessions, sidebar order, and workflow presets
 
 If you choose a custom appearance background image, Hermes Desktop copies that
@@ -69,7 +76,7 @@ support directory is created with private directory permissions (`0700`).
 They are ordinary JSON files under your macOS user account, not Keychain
 entries.
 
-The app also creates SSH control sockets under:
+For SSH connections, the app also creates control sockets under:
 
 `/tmp/hd-<uid>`
 
@@ -77,32 +84,33 @@ That directory is also created with private directory permissions (`0700`).
 
 ## What Is Not Stored Locally
 
-Hermes Desktop does not maintain a local mirror of Hermes host state.
+Hermes Desktop does not maintain a synchronized mirror of Hermes state.
 
 In the current implementation, it does not store these Hermes artifacts as a
-local source of truth:
+second source of truth:
 
-- remote session databases and transcripts
-- remote Kanban databases
-- remote cron job definitions
-- remote Hermes skill directories
-- remote workspace files as a synchronized mirror
+- session databases and transcripts
+- Kanban databases
+- cron job definitions
+- Hermes skill directories
+- workspace files as a synchronized mirror
 
 Unsaved edits can still exist transiently in app memory while you are working,
-but the app's design is to read and write the canonical state on the host.
+but the app's design is to read and write the canonical state on the active
+Hermes machine.
 
 Workflow presets are the notable local exception: they are intentionally stored
-as lightweight launch helpers on your Mac, scoped to the selected host/profile,
-and used only to seed a fresh remote Terminal session. They are not a local
-mirror of remote Hermes state.
+as lightweight launch helpers on your Mac, scoped to the active
+connection/profile, and used only to seed a fresh local or SSH Terminal
+session. They are not a mirror of Hermes state.
 
 ## Secrets And Credentials
 
 Hermes Desktop does not ask you to enter an SSH password into the app.
 
-Current connection profiles store routing details such as alias, host, user,
-port, and Hermes profile name. They do not contain SSH private keys, API keys,
-or a stored SSH password.
+Current connection profiles store the connection type, Hermes profile details,
+and—when using SSH—routing details such as alias, host, user, and port. They do
+not contain SSH private keys, API keys, or a stored SSH password.
 
 The app assumes SSH authentication is already handled by your existing macOS
 and SSH setup.
@@ -113,7 +121,7 @@ Hermes Desktop keeps its network surface intentionally small.
 
 In the current implementation, network calls are:
 
-- SSH connections to the host you explicitly configure
+- SSH connections only for hosts you explicitly configure as `SSH Host`
 - an optional GitHub API request to
   `https://api.github.com/repos/dodo-reach/hermes-desktop/releases/latest`
   when checking whether a newer Hermes Desktop version exists
@@ -133,8 +141,8 @@ If you want to validate the app before trusting it:
 - verify the installed bundle with
   `codesign --verify --deep --strict /Applications/HermesDesktop.app`
 - observe live connections with Little Snitch, LuLu, `lsof`, or `nettop`
-- compare this document with the current code, especially the SSH transport,
-  local storage, update check, and packaging scripts
+- compare this document with the current code, especially the local/SSH
+  transport switch, local storage, update check, and packaging scripts
 
 For release-specific details and the limits of those checks, see
 [docs/distribution.md](docs/distribution.md).

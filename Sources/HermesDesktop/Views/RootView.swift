@@ -552,7 +552,7 @@ private struct WorkspaceSidebarCard: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
 
-                Text(connection.displayDestination)
+                Text(connection.localizedDisplayDestination)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

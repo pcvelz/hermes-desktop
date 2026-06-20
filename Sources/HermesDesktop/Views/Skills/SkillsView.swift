@@ -73,7 +73,7 @@ struct SkillsView: View {
                 ContentUnavailableView(
                     L10n.string("No skills found"),
                     systemImage: "book.closed",
-                    description: Text(L10n.string("No readable SKILL.md files were discovered in the Hermes skill roots for this SSH target."))
+                    description: Text(noSkillsDescription)
                 )
                 .frame(maxWidth: .infinity, minHeight: 300)
             }
@@ -114,6 +114,13 @@ struct SkillsView: View {
                 }
             }
         }
+    }
+
+    private var noSkillsDescription: String {
+        if appState.activeConnection?.kind == .local {
+            return L10n.string("No readable SKILL.md files were discovered in this Mac’s real Hermes skill roots.")
+        }
+        return L10n.string("No readable SKILL.md files were discovered in the Hermes skill roots for this SSH target.")
     }
 
     private var skillsToolbar: some View {

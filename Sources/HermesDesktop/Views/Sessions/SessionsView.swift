@@ -118,10 +118,7 @@ struct SessionsView: View {
             }
             Button(L10n.string("Cancel"), role: .cancel) {}
         } message: { session in
-            Text(L10n.string(
-                "“%@” will be removed from Hermes Desktop and deleted on the remote Hermes host as well. This action cannot be undone.",
-                session.resolvedTitle
-            ))
+            Text(sessionDeleteConfirmation(session))
         }
     }
 
@@ -191,7 +188,7 @@ struct SessionsView: View {
                 ContentUnavailableView(
                     L10n.string("No sessions found"),
                     systemImage: "tray",
-                    description: Text(L10n.string("No readable Hermes sessions were discovered yet for this SSH target."))
+                    description: Text(noSessionsDescription)
                 )
                 .frame(maxWidth: .infinity, minHeight: 300)
             }
@@ -247,6 +244,26 @@ struct SessionsView: View {
                 }
             }
         }
+    }
+
+    private var noSessionsDescription: String {
+        if appState.activeConnection?.kind == .local {
+            return L10n.string("No readable Hermes sessions were discovered yet in this Mac’s real Hermes data.")
+        }
+        return L10n.string("No readable Hermes sessions were discovered yet for this SSH target.")
+    }
+
+    private func sessionDeleteConfirmation(_ session: SessionSummary) -> String {
+        if appState.activeConnection?.kind == .local {
+            return L10n.string(
+                "“%@” will be permanently deleted from this Mac’s real Hermes data using your current macOS account. This action cannot be undone.",
+                session.resolvedTitle
+            )
+        }
+        return L10n.string(
+            "“%@” will be removed from Hermes Desktop and deleted on the remote Hermes host as well. This action cannot be undone.",
+            session.resolvedTitle
+        )
     }
 
     private var trimmedSearchText: String {

@@ -431,7 +431,9 @@ struct SkillEditorView: View {
     private var generatedPreviewPanel: some View {
         HermesSurfacePanel(
             title: "Generated Preview",
-            subtitle: "This is the SKILL.md the app will write on the remote Hermes host."
+            subtitle: appState.activeConnection?.kind == .local
+                ? "This is the SKILL.md the app will write to this Mac’s real Hermes data."
+                : "This is the SKILL.md the app will write on the remote Hermes host."
         ) {
             HermesInsetSurface {
                 Text(draft.generatedMarkdown)
@@ -450,7 +452,7 @@ struct SkillEditorView: View {
             VStack(alignment: .leading, spacing: 14) {
                 HermesInsetSurface {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(L10n.string("Remote path"))
+                        Text(L10n.string(appState.activeConnection?.kind == .local ? "Path on this Mac" : "Remote path"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
@@ -476,7 +478,7 @@ struct SkillEditorView: View {
     private var rawMarkdownPanel: some View {
         HermesSurfacePanel(
             title: "SKILL.md",
-            subtitle: "Edit the existing skill source directly. Saves are atomic and checked against the last loaded remote version."
+            subtitle: "Edit the existing skill source directly. Saves are atomic and checked against the last loaded version."
         ) {
             TextEditor(text: $rawMarkdownContent)
                 .font(.system(.body, design: .monospaced))
@@ -492,7 +494,7 @@ struct SkillEditorView: View {
         case .create:
             return "Create a new Hermes skill from a guided form instead of writing YAML frontmatter and folder structure by hand."
         case .edit:
-            return "Update the existing SKILL.md directly while keeping the remote path fixed and protected by a conflict check."
+            return "Update the existing SKILL.md directly while keeping its path fixed and protected by a conflict check."
         }
     }
 

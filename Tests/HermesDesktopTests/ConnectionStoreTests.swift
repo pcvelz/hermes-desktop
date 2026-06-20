@@ -81,6 +81,71 @@ struct ConnectionStoreTests {
     }
 
     @Test
+    func localConnectionKindPersistsRoundTrip() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let paths = makeTestAppPaths(root: root)
+        let store = ConnectionStore(paths: paths)
+        store.upsert(ConnectionProfile(
+            kind: .local,
+            label: "This Mac",
+            hermesProfile: "research"
+        ))
+
+        let reloaded = ConnectionStore(paths: paths)
+        let connection = try #require(reloaded.connections.first)
+        #expect(connection.kind == .local)
+        #expect(connection.label == "This Mac")
+        #expect(connection.hermesProfile == "research")
+    }
+
+    @Test
+    func unknownConnectionKindSkipsOnlyMalformedProfile() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = makeTestAppPaths(root: root)
+        let payload = """
+        [
+          {
+            "id": "8B1B94EA-7A4E-4FA5-9E63-B41329EE213B",
+            "label": "Legacy SSH",
+            "sshAlias": "prod",
+            "sshHost": "",
+            "sshPort": null,
+            "sshUser": "alice",
+            "hermesProfile": null,
+            "customHermesHomePath": null,
+            "createdAt": 721692800,
+            "updatedAt": 721692900,
+            "lastConnectedAt": null
+          },
+          {
+            "id": "2A757DBB-F81E-476C-BD87-763CE9B29D72",
+            "kind": "future-transport",
+            "label": "Unknown",
+            "sshAlias": "",
+            "sshHost": "",
+            "sshPort": null,
+            "sshUser": "",
+            "hermesProfile": null,
+            "customHermesHomePath": null,
+            "createdAt": 721692800,
+            "updatedAt": 721692900,
+            "lastConnectedAt": null
+          }
+        ]
+        """
+        try Data(payload.utf8).write(to: paths.connectionsURL)
+
+        let store = ConnectionStore(paths: paths)
+
+        #expect(store.connections.map(\.label) == ["Legacy SSH"])
+        #expect(store.connections.first?.kind == .ssh)
+        #expect(store.persistenceError?.contains("skipped 1") == true)
+    }
+
+    @Test
     func backgroundImageIsCopiedPersistedAndCleared() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
