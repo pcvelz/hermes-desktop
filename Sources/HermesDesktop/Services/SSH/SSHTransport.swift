@@ -68,10 +68,12 @@ final class SSHTransport: @unchecked Sendable {
             if let validationError = connection.validationError {
                 throw SSHTransportError.invalidConnection(validationError)
             }
-            return try await runLocal(
-                command: remoteCommand,
-                hermesHomeExpression: connection.remoteHermesHomeShellExpression,
-                searchPathExpression: connection.remoteHermesSearchPathShellExpression,
+            // The command is already fully self-contained (the model's
+            // `remoteServiceCommand` bakes in HERMES_HOME / PATH / HERMES_HEADLESS),
+            // so run it verbatim through a local non-interactive shell.
+            return try await processRunner.run(
+                executableURL: URL(fileURLWithPath: "/bin/sh"),
+                arguments: ["-c", remoteCommand],
                 standardInput: standardInput
             )
         }
@@ -251,35 +253,6 @@ final class SSHTransport: @unchecked Sendable {
     }
 
     // MARK: - Local execution
-
-    private func runLocal(
-        command: String,
-        hermesHomeExpression: String,
-        searchPathExpression: String,
-        standardInput: Data?
-    ) async throws -> SSHCommandResult {
-        // Wrap the caller's command in the same HERMES_HOME / PATH preamble that
-        // remote execution uses, then run it through /bin/sh -c on this machine.
-        //
-        // HERMES_HEADLESS=1 is mandatory here: this path spawns the agent for
-        // one-shot RPC / chat turns driven by the control endpoint — there is no
-        // user at a TTY and no SSH_* vars to signal "no display". Without it the
-        // agent's OAuth flows (google_oauth._is_headless / mcp_oauth) decide a
-        // browser is available and pop the user's default browser (Firefox)
-        // mid-chat instead of returning the auth URL in the reply. The
-        // interactive terminal PTY is a separate spawn and is intentionally
-        // left untouched (a user there may legitimately want a browser open).
-        let exportHermesHome = "export HERMES_HOME=\"\(hermesHomeExpression)\""
-        let exportPath = "export PATH=\"\(searchPathExpression)\""
-        let exportHeadless = "export HERMES_HEADLESS=1"
-        let wrapped = "\(exportHermesHome); \(exportPath); \(exportHeadless); \(command)"
-
-        return try await processRunner.run(
-            executableURL: URL(fileURLWithPath: "/bin/sh"),
-            arguments: ["-c", wrapped],
-            standardInput: standardInput
-        )
-    }
 
     private func describeLocalFailure(
         stdout: String,

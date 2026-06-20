@@ -252,8 +252,15 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     func remoteServiceCommand(_ commandLine: String) -> String {
         let exportCommand = "export HERMES_HOME=\"\(remoteHermesHomeShellExpression)\""
         let pathCommand = "export PATH=\"\(remoteHermesSearchPathShellExpression)\""
+        // HERMES_HEADLESS=1 on every one-shot / RPC service call (local control
+        // endpoint and remote service alike): these spawn the agent with no TTY and
+        // no display, so without it the agent's OAuth flows decide a browser is
+        // available and pop the user's default browser (Firefox) mid-chat instead of
+        // returning the auth URL. The interactive terminal PTY uses a separate
+        // builder (`remoteShellBootstrapCommand`) and is intentionally left untouched.
+        let headlessCommand = "export HERMES_HEADLESS=1"
         let escapedCommand = commandLine.escapedForDoubleQuotedShellArgument
-        let innerCommand = "\(exportCommand); \(pathCommand); exec /bin/sh -c \"\(escapedCommand)\""
+        let innerCommand = "\(exportCommand); \(pathCommand); \(headlessCommand); exec /bin/sh -c \"\(escapedCommand)\""
         return "exec /bin/sh -c \"\(innerCommand.escapedForOuterDoubleQuotedShellCommand)\""
     }
 
@@ -407,18 +414,15 @@ struct ConnectionProfile: Codable, Identifiable, Equatable, Hashable {
     func updated() -> ConnectionProfile {
         var copy = self
         copy.label = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        if isLocal {
-            copy.sshAlias = ""
-            copy.sshHost = ""
-            copy.sshUser = ""
+        // Preserve (only trim) SSH draft values regardless of kind. When kind == .local
+        // the transport short-circuits on `isLocal`/`kind` and never reads these fields,
+        // so keeping them lets a user toggle back to SSH without re-typing — and matches
+        // upstream's "no execution leakage" contract.
+        copy.sshAlias = sshAlias.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.sshHost = sshHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.sshUser = sshUser.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let sshPort = sshPort, sshPort <= 0 {
             copy.sshPort = nil
-        } else {
-            copy.sshAlias = sshAlias.trimmingCharacters(in: .whitespacesAndNewlines)
-            copy.sshHost = sshHost.trimmingCharacters(in: .whitespacesAndNewlines)
-            copy.sshUser = sshUser.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let sshPort = sshPort, sshPort <= 0 {
-                copy.sshPort = nil
-            }
         }
         copy.hermesProfile = trimmedHermesProfile
         copy.customHermesHomePath = trimmedCustomHermesHomePath
